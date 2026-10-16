@@ -43,7 +43,7 @@ Everything the deployment needs comes from **one file: `.env`**.
 
 ```bash
 sudo mkdir -p /opt/tagid-infra-manager && sudo chown "$USER" /opt/tagid-infra-manager
-git clone https://github.com/<your-github-user>/tagid-infra-manager.git /opt/tagid-infra-manager
+git clone https://github.com/Shivamgarud8/Server_invetory.git /opt/tagid-infra-manager
 cd /opt/tagid-infra-manager
 ```
 
@@ -273,7 +273,7 @@ The portal keeps no state of its own on the app server. Everything lives in Post
 
 ```bash
 # on the NEW server
-git clone https://github.com/<you>/tagid-infra-manager.git /opt/tagid-infra-manager && cd /opt/tagid-infra-manager
+git clone https://github.com/Shivamgarud8/Server_invetory.git /opt/tagid-infra-manager && cd /opt/tagid-infra-manager
 scp srv-106:/opt/tagid-infra-manager/.env .            # copy the config (contains secrets — use scp/ssh only)
 scp -r srv-106:/opt/tagid-infra-manager/nginx/certs/* nginx/certs/
 nano .env      # change: SERVER_LABEL, APP_SERVER_IP, PUBLIC_URL, HTTPS_BIND
@@ -291,7 +291,7 @@ docker compose stop tagid-portal-backend
 ./scripts/backup.sh
 
 # 2. on the NEW server
-git clone https://github.com/<you>/tagid-infra-manager.git /opt/tagid-infra-manager && cd /opt/tagid-infra-manager
+git clone https://github.com/Shivamgarud8/Server_invetory.git /opt/tagid-infra-manager && cd /opt/tagid-infra-manager
 scp srv-106:/opt/tagid-infra-manager/.env .
 scp -r srv-106:/opt/tagid-infra-manager/nginx/certs/* nginx/certs/
 scp srv-106:/tagid_data/infra-manager/backups/<latest>.dump /tmp/
@@ -332,26 +332,24 @@ This exact procedure was tested end to end: backup, new DB server, `setup-db`, r
 
 ---
 
-## 11. Push this repository to GitHub
+## 11. GitHub repository
 
-`.gitignore` already excludes `.env`, certificates, backups, `node_modules` and build output. Check before pushing:
+The code lives at **https://github.com/Shivamgarud8/Server_invetory** (keep it **private**: it holds no secrets, but it describes your internal infrastructure).
 
-```bash
-cd /opt/tagid-infra-manager          # or wherever the project is
-git status --short                   # .env and nginx/certs/tls.* must NOT be listed
-```
-
-Create an **empty private** repository on GitHub named `tagid-infra-manager` (no README or .gitignore), then:
+`.gitignore` keeps `.env`, TLS certificates, backups, `node_modules` and build output out of Git. Before every push, check:
 
 ```bash
-# HTTPS (you'll be asked for a Personal Access Token as the password)
-git remote add origin https://github.com/<your-github-user>/tagid-infra-manager.git
-# — or SSH, if your key is added to GitHub —
-# git remote add origin git@github.com:<your-github-user>/tagid-infra-manager.git
-
-git push -u origin main
+git status --short      # .env, nginx/certs/tls.*, node_modules must NOT appear
 ```
 
-Or use the GitHub CLI: `gh auth login`, then `gh repo create tagid-infra-manager --private --source . --push`.
+Publishing your changes:
 
-Keep the repository **private**. It doesn't contain secrets, but it does describe your internal infrastructure layout.
+```bash
+git add -A
+git commit -m "describe the change"
+git push                # password prompt = a GitHub Personal Access Token, or use an SSH remote
+```
+
+On a server you only pull: `git pull && docker compose up -d --build`.
+
+> When copying the project folder by hand, use `cp -a` (or `rsync -a`). A plain `cp -r dir/*` skips hidden files like `.gitignore` and `.env.example`.
