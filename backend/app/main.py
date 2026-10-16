@@ -43,7 +43,7 @@ def bootstrap() -> None:
             db.commit()
             return
         role = db.scalar(select(Role).where(Role.name == SUPER_ADMIN))
-        db.add(User(username=username, email=settings.bootstrap_admin_email, full_name="Administrator",
+        db.add(User(username=username, email=settings.bootstrap_admin_email or None, full_name="Administrator",
                     password_hash=hash_password(password), roles=[role], must_change_password=True))
         db.commit()
         if generated:

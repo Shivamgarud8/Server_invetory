@@ -10,7 +10,9 @@ from sqlalchemy.engine import URL
 class Settings(BaseSettings):
     # Real environment variables (.env via docker compose) win over the auto-generated secrets file
     model_config = SettingsConfigDict(
-        env_file=(os.environ.get("SECRETS_FILE", "/app/secrets/generated.env"), ".env"), extra="ignore"
+        env_file=(os.environ.get("SECRETS_FILE", "/app/secrets/generated.env"), ".env"),
+        extra="ignore",
+        env_ignore_empty=True,  # KEY= (empty) in .env means "use the default / auto-generated value"
     )
 
     # Application

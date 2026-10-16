@@ -51,62 +51,100 @@ cd /opt/tagid-infra-manager
 
 ## 4. Create `.env`
 
-`.env` only contains **where things are**: this server, and the database server.
+One command creates a complete `.env`. It generates every password and key and fills in this server's IP:
 
 ```bash
-cp .env.example .env
-chmod 600 .env
-./scripts/generate-secrets.sh      # prints a strong DB_PASSWORD
-nano .env
+./scripts/init-env.sh                              # auto-detects this server's IP and hostname
+# or be explicit:
+./scripts/init-env.sh --ip 10.80.0.106 --label srv-106
+./scripts/init-env.sh --db-host 10.80.0.13          # PostgreSQL on another server
+./scripts/init-env.sh --bundled-db                 # use the bundled PostgreSQL container
 ```
 
-| Variable | Example | Meaning |
+It prints the first-login password. The file gets permissions `600`. If a `.env` already exists, the script refuses to overwrite it; `--force` replaces it and keeps a backup.
+
+Afterwards, open `.env` and set **`DB_ADMIN_PASSWORD`** (your PostgreSQL superuser password). Check `DB_HOST` if PostgreSQL is not on this server.
+
+`.env` lists **every** setting. An empty value (`KEY=`) means "use the default", or for keys and passwords, "generate automatically".
+
+### Variables reference
+
+**1. This server**
+
+| Variable | Filled by init-env | Meaning |
 |---|---|---|
-| `SERVER_LABEL` | `srv-106` | Shown in the top bar, login page and browser tab, so you know which deployment you're on |
-| `PUBLIC_URL` | `https://10.80.0.106` | The address users open (no trailing slash) |
-| `HTTPS_BIND` | `10.80.0.106` | Interface nginx listens on. `0.0.0.0` means all interfaces; a private IP keeps the portal internal |
+| `SERVER_LABEL` | hostname | Shown in the top bar, login page and browser tab |
+| `APP_SERVER_IP` | this server's IP | Informational only |
+| `PUBLIC_URL` | `https://<IP>` | Address users open (no trailing slash). Change it if you use a DNS name |
+| `HTTPS_BIND` | `0.0.0.0` | Interface nginx listens on. Set the private IP to keep the portal internal |
 | `HTTPS_PORT` / `HTTP_PORT` | `443` / `80` | Published ports. HTTP only redirects to HTTPS |
-| `DB_HOST` | `10.80.0.106` | PostgreSQL IP or hostname **as seen from the backend container** (see section 5) |
-| `DB_PORT` | `5432` | PostgreSQL port |
-| `DB_NAME` | `tagid_infra_manager` | Dedicated database for the portal |
-| `DB_USER` | `infra_manager_app` | Application user. It owns only `DB_NAME` and is never a superuser |
-| `DB_PASSWORD` | *(generated)* | Password for `DB_USER` |
-| `DB_ADMIN_USER` / `DB_ADMIN_PASSWORD` | `postgres` / … | PostgreSQL superuser ("root"). **Only** used once by `scripts/setup-db.sh`. Delete the password afterwards |
-| `APP_NAME` | `TagID Infra Manager` | Shown in the footer and browser title |
-| `TZ` | `Asia/Kolkata` | Time zone |
-| `DEFAULT_THEME` | `system` | `light`, `dark` or `system`. Each user can change it in the top bar |
 
-### What is automatic (nothing to configure)
-
-| | How it works |
-|---|---|
-| **Security keys** | `APP_SECRET_KEY` (protects 2FA secrets) and `CREDENTIAL_ENCRYPTION_KEY` (encrypts stored passwords) are generated on first start. They are saved in the Docker volume `portal-secrets`, never in the database. **Back them up** with `./scripts/show-secrets.sh` (see section 8) |
-| **First admin** | When there are no users, the user `admin` is created with a random password, printed once in the backend log. You must change it at first login |
-| **Backups** | `./scripts/backup.sh` writes to `./backups/`, which is git-ignored |
-| **Security defaults** | 30 min idle logout, 12 h maximum session, lockout after 5 failed logins for 15 min, secure cookies, `PUBLIC_URL` as the only allowed origin |
-
-### Optional overrides (not in `.env.example`)
-
-Add a line to `.env` only if you need to change one of these defaults.
+**2. Database server**
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DB_SSLMODE` | `prefer` | `disable`, `prefer`, `require` or `verify-full`. Use `require` when the DB is on another machine |
-| `DATABASE_URL` | — | A full connection URL. If set, it replaces all the `DB_*` values |
-| `TRUSTED_NETWORKS` | *(no restriction)* | Only these CIDRs may use the portal, e.g. `10.80.0.0/16,10.8.0.0/24` |
+| `DB_HOST` | this server's IP | PostgreSQL IP **as seen from the backend container** (see section 5) |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_NAME` / `DB_USER` | `tagid_infra_manager` / `infra_manager_app` | Dedicated database and least-privilege user |
+| `DB_PASSWORD` | *(generated)* | Password for `DB_USER`. `setup-db.sh` applies it |
+| `DB_SSLMODE` | `prefer` | Use `require` when the DB is on another machine |
+| `DB_ADMIN_USER` / `DB_ADMIN_PASSWORD` | `postgres` / **you fill this** | Superuser, only used once by `setup-db.sh`. Delete the password afterwards |
+| `DATABASE_URL` | *(empty)* | A full connection URL. If set, it replaces the `DB_*` values |
+
+**3. Application**
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `APP_NAME` | `TagID Infra Manager` | Footer and browser title |
+| `APP_ENV` | `production` | `development` enables `/api/docs` |
+| `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8080` | Backend inside its container. **Keep as is**, because nginx expects 8080 |
+| `APP_WORKERS` | `2` | Backend worker processes |
+| `APP_VERSION` | `1.3.0` | Docker image tag |
+| `TZ` | `Asia/Kolkata` | Time zone |
+| `DEFAULT_THEME` | `system` | `light`, `dark` or `system`. Each user can change it |
+
+**4. Security / sessions**
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `APP_SECRET_KEY` | *(generated)* | Protects 2FA secrets. **Keep it the same when moving servers** |
 | `SESSION_IDLE_MINUTES` / `SESSION_ABSOLUTE_HOURS` | `30` / `12` | Idle logout / maximum session length |
 | `LOGIN_MAX_FAILED_ATTEMPTS` / `LOGIN_LOCKOUT_MINUTES` | `5` / `15` | Account lockout after repeated failed logins |
-| `ALLOWED_ORIGINS` | `PUBLIC_URL` | Extra browser origins to allow (comma-separated) |
-| `BACKUP_DIR` / `BACKUP_RETENTION_DAYS` | `./backups` / `30` | Where `backup.sh` writes dumps, and how long they are kept |
-| `DATA_DIR` | `/tagid_data/infra-manager` | Data folder for the bundled PostgreSQL container |
-| `CREDENTIAL_EXPIRY_WARNING_DAYS` | `30` | How far ahead the dashboard flags expiring credentials |
-| `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD` | `admin` / *(random)* | Pick the first admin's name and password yourself |
-| `APP_SECRET_KEY` / `CREDENTIAL_ENCRYPTION_KEY` | *(auto-generated)* | Set these only when moving servers (section 9). A value in `.env` always wins over the generated one |
-| `VAULT_PROVIDER`, `VAULT_ADDR`, `VAULT_TOKEN` | `local` | Use `hashicorp` to keep passwords in HashiCorp Vault instead of encrypted in PostgreSQL |
-| `VAULT_MOUNT`, `VAULT_PATH_PREFIX`, `VAULT_NAMESPACE`, `VAULT_CA_CERT` | `secret`, `tagid-infra-manager` | Advanced Vault settings |
-| `APP_WORKERS` / `APP_VERSION` / `APP_ENV` | `2` / `1.1.0` / `production` | Worker processes / image tag / `development` turns on the API docs at `/api/docs` |
+| `COOKIE_SECURE` | `true` | Only set `false` for plain-HTTP local development |
+| `ALLOWED_ORIGINS` | *(empty = `PUBLIC_URL`)* | Extra browser origins to allow |
+| `TRUSTED_NETWORKS` | private ranges | Only these CIDRs may use the portal. Empty means no restriction |
+| `TRUSTED_PROXIES` | Docker ranges | The nginx container network. Leave the default |
 
-> `.env` values are read literally. Don't wrap them in quotes and don't use `$` in passwords (Docker Compose treats `$` as a variable). `generate-secrets.sh` only outputs safe characters.
+**5. Credential vault**
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VAULT_PROVIDER` | `local` | `local`: passwords encrypted in PostgreSQL. `hashicorp`: stored in HashiCorp Vault |
+| `CREDENTIAL_ENCRYPTION_KEY` | *(generated)* | Encrypts stored passwords. **If you lose this key, every stored password is lost.** Keep it the same when moving servers |
+| `VAULT_ADDR`, `VAULT_TOKEN` | *(empty)* | Required for `hashicorp` |
+| `VAULT_MOUNT`, `VAULT_PATH_PREFIX`, `VAULT_NAMESPACE`, `VAULT_CA_CERT` | `secret`, `tagid-infra-manager` | Advanced Vault settings |
+
+**6. Data & backups**
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATA_DIR` | `/tagid_data/infra-manager` | Data folder for the bundled PostgreSQL container |
+| `BACKUP_DIR` | `backups` | Where `backup.sh` writes dumps. A relative path means inside the project folder |
+| `BACKUP_RETENTION_DAYS` | `30` | Older dumps are deleted |
+| `CREDENTIAL_EXPIRY_WARNING_DAYS` | `30` | How far ahead the dashboard flags expiring credentials |
+
+**7. First admin**
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BOOTSTRAP_ADMIN_ENABLED` | `true` | Create the first admin when there are no users (harmless afterwards) |
+| `BOOTSTRAP_ADMIN_USERNAME` | `admin` | First admin's username |
+| `BOOTSTRAP_ADMIN_PASSWORD` | *(generated)* | Must be changed at first login. If empty, a random password is printed in the backend log |
+| `BOOTSTRAP_ADMIN_EMAIL` | *(empty)* | Optional |
+
+> If `APP_SECRET_KEY` or `CREDENTIAL_ENCRYPTION_KEY` is left empty, it is generated on first start and kept in the `portal-secrets` Docker volume. `./scripts/show-secrets.sh` prints it. A value in `.env` always wins.
+>
+> `.env` values are read literally. Don't wrap them in quotes and don't use `$` in passwords (Docker Compose treats `$` as a variable).
 
 ---
 
@@ -204,23 +242,19 @@ Database migrations run on their own every time the backend starts.
 
 ### First login
 
-1. Get the generated admin password:
-   ```bash
-   docker compose logs tagid-portal-backend | grep "FIRST ADMIN"
-   # FIRST ADMIN CREATED  —  username: admin   password: xxxxxxxxxxxxxxxx
-   ```
-2. Open `PUBLIC_URL`, sign in as `admin`, and set a new password when prompted.
+1. Open `PUBLIC_URL` and sign in as `admin` with the password `init-env.sh` printed. You'll also find it as `BOOTSTRAP_ADMIN_PASSWORD` in `.env`. If you left it empty, run `docker compose logs tagid-portal-backend | grep "FIRST ADMIN"`.
+2. Set a new password when prompted.
 3. Go to **Profile → Set up 2FA**.
-4. **Back up the security keys** (one time): `./scripts/show-secrets.sh`. Store the output in a password manager, not next to the DB backups.
-5. Remove `DB_ADMIN_PASSWORD` from `.env`.
+4. **Back up** `APP_SECRET_KEY` and `CREDENTIAL_ENCRYPTION_KEY` from `.env` in a password manager, not next to the DB backups.
+5. In `.env`, empty `DB_ADMIN_PASSWORD` and `BOOTSTRAP_ADMIN_PASSWORD`. Neither is needed any more.
 6. Go to **User Management → Add User** to create the team's logins. Pick roles, and optionally restrict each user to certain environments.
 7. Go to **Excel Import** and import the sheets in this order: servers, then credentials, then versions.
 
 ### Post-install checklist
 
 - [ ] `.env` has permissions `600` and is not in Git
-- [ ] `DB_ADMIN_PASSWORD` removed from `.env`
-- [ ] Output of `./scripts/show-secrets.sh` saved in a password manager
+- [ ] `DB_ADMIN_PASSWORD` and `BOOTSTRAP_ADMIN_PASSWORD` emptied in `.env`
+- [ ] `APP_SECRET_KEY` and `CREDENTIAL_ENCRYPTION_KEY` saved in a password manager
 - [ ] PostgreSQL port firewalled so only the app server can reach it
 - [ ] Backup cron installed (section 8)
 - [ ] Every admin has 2FA enabled
@@ -238,7 +272,7 @@ Database migrations run on their own every time the backend starts.
 | Stop | `docker compose down` (data stays in PostgreSQL) |
 | Migration status | `docker compose exec tagid-portal-backend alembic current` |
 | Backup now | `./scripts/backup.sh` → `./backups/tagid_infra_manager-<timestamp>.dump` |
-| Show security keys | `./scripts/show-secrets.sh` (back these up once) |
+| Show auto-generated keys | `./scripts/show-secrets.sh` (only needed if the keys were left empty in `.env`) |
 | Restore | `docker compose stop tagid-portal-backend && ./scripts/restore.sh <file.dump> && docker compose up -d` |
 
 Nightly backup (`crontab -e`):
@@ -253,20 +287,19 @@ Copy the backup directory off the server, e.g. with rsync or your `dbackup` tool
 
 ## 9. Move to another server (e.g. 106 → new server)
 
-Everything lives in PostgreSQL, plus the two auto-generated security keys. On the new server you put those keys into `.env`. A value in `.env` always wins, so nothing new gets generated.
+Everything lives in PostgreSQL, plus `.env`. Copy the old `.env`, keep its keys, and change only the server and DB lines.
+
+**Never change these when moving:** `APP_SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`, and `DB_PASSWORD` (when restoring a backup).
+If you started with empty keys, get the generated values with `./scripts/show-secrets.sh` on the old server and paste them into `.env`.
 
 ### Case 1 — Only the app moves, the database stays where it is
 
 ```bash
-# on 106: print the keys
-./scripts/show-secrets.sh            # APP_SECRET_KEY=…  CREDENTIAL_ENCRYPTION_KEY=…
-
 # on the NEW server
 git clone https://github.com/Shivamgarud8/Server_invetory.git /opt/tagid-infra-manager && cd /opt/tagid-infra-manager
 scp srv-106:/opt/tagid-infra-manager/.env .
 scp srv-106:/opt/tagid-infra-manager/nginx/certs/tls.* nginx/certs/
-nano .env      # change SERVER_LABEL, PUBLIC_URL, HTTPS_BIND
-               # paste the two lines from show-secrets.sh at the end
+nano .env      # change SERVER_LABEL, APP_SERVER_IP, PUBLIC_URL, HTTPS_BIND
 # allow the new server's IP in the DB server's pg_hba.conf and firewall
 docker compose up -d --build
 # check everything works, then on 106: docker compose down
@@ -276,7 +309,6 @@ docker compose up -d --build
 
 ```bash
 # 1. on 106
-./scripts/show-secrets.sh                   # copy the two lines
 docker compose stop tagid-portal-backend    # stop changes during the dump
 ./scripts/backup.sh                         # → backups/<file>.dump
 
@@ -286,10 +318,9 @@ scp srv-106:/opt/tagid-infra-manager/.env .
 scp srv-106:/opt/tagid-infra-manager/nginx/certs/tls.* nginx/certs/
 scp srv-106:/opt/tagid-infra-manager/backups/<file>.dump /tmp/
 
-nano .env      # change: SERVER_LABEL, PUBLIC_URL, HTTPS_BIND, DB_HOST, DB_PORT,
+nano .env      # change: SERVER_LABEL, APP_SERVER_IP, PUBLIC_URL, HTTPS_BIND, DB_HOST, DB_PORT,
                #         DB_ADMIN_PASSWORD (the new server's postgres password)
-               # keep:   DB_NAME, DB_USER, DB_PASSWORD
-               # add:    the two lines from show-secrets.sh
+               # keep:   DB_NAME, DB_USER, DB_PASSWORD, APP_SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY
 
 ./scripts/setup-db.sh                       # creates the empty DB and user on the new DB server
 ./scripts/restore.sh /tmp/<file>.dump       # type the DB name to confirm
@@ -299,7 +330,7 @@ docker compose up -d --build
 #    Then point users at the new PUBLIC_URL and on 106: docker compose down
 ```
 
-This procedure was tested end to end, including deleting the key volume and restoring the keys from `.env`. Every stored password decrypted correctly afterwards.
+This procedure was tested end to end. Every stored password decrypted correctly on the new database.
 
 ---
 
@@ -311,10 +342,10 @@ This procedure was tested end to end, including deleting the key volume and rest
 | `connection refused` / timeout to the DB | `DB_HOST` must be reachable **from inside Docker**. Don't use `localhost`; use the server's IP. Check PostgreSQL `listen_addresses`, `pg_hba.conf` and the firewall |
 | `password authentication failed for user "infra_manager_app"` | Run `./scripts/setup-db.sh` again. It resets the password to `DB_PASSWORD` |
 | `setup-db.sh`: `password authentication failed for user "postgres"` | Wrong `DB_ADMIN_PASSWORD` |
-| Lost the first admin password | `docker compose logs tagid-portal-backend \| grep "FIRST ADMIN"` |
-| "Unable to decrypt secret" after a move | The keys from the old server weren't carried over. Put the old `CREDENTIAL_ENCRYPTION_KEY` (from `show-secrets.sh`) in `.env` |
+| Lost the first admin password | It's `BOOTSTRAP_ADMIN_PASSWORD` in `.env`. If that was empty: `docker compose logs tagid-portal-backend \| grep "FIRST ADMIN"` |
+| "Unable to decrypt secret" after a move | `CREDENTIAL_ENCRYPTION_KEY` differs from the old server's. Copy the old value into `.env` |
 | 2FA codes rejected after a move | `APP_SECRET_KEY` wasn't carried over. Restore it in `.env`, or have an admin use **Reset 2FA** on each user |
-| `Access denied from this network` | You set `TRUSTED_NETWORKS` and your IP isn't in it |
+| `Access denied from this network` | Your IP isn't in `TRUSTED_NETWORKS` |
 | Login works but you're immediately logged out | You're on plain HTTP with `COOKIE_SECURE=true`. Use HTTPS |
 | nginx won't start | `nginx/certs/tls.crt` or `tls.key` is missing |
 | Port 443 already in use | Change `HTTPS_PORT`/`HTTP_PORT`, or set `HTTPS_BIND` to a specific IP |
