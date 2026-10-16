@@ -5,7 +5,7 @@ set -euo pipefail
 . "$(dirname "$0")/_env.sh"
 
 if bundled; then
-  echo "DB_HOST=tagid-portal-postgres: the bundled container creates the database itself — nothing to do."
+  echo "DB_HOST=server-db: the dedicated server-db container creates the database and user itself — nothing to do."
   exit 0
 fi
 : "${DB_ADMIN_PASSWORD:?Set DB_ADMIN_PASSWORD (PostgreSQL superuser password) in .env}"

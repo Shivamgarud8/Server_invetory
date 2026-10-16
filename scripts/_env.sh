@@ -20,13 +20,13 @@ case "$DB_HOST" in
 esac
 PG_IMAGE="${PG_CLIENT_IMAGE:-postgres:18-alpine}"
 
-bundled() { [ "$DB_HOST" = "tagid-portal-postgres" ]; }
+bundled() { [ "$DB_HOST" = "server-db" ]; }
 
 # pg <user> <password> <cmd...>   — runs a PostgreSQL client tool with the given credentials
 pg() {
   local user="$1" pass="$2"; shift 2
   if bundled; then
-    docker exec -i -e PGPASSWORD="$pass" tagid-portal-postgres "$@" -U "$user" -h 127.0.0.1 -p 5432
+    docker exec -i -e PGPASSWORD="$pass" server-db "$@" -U "$user" -h 127.0.0.1 -p "$DB_PORT"
   else
     docker run --rm -i --network host -e PGPASSWORD="$pass" -e PGSSLMODE="${DB_SSLMODE:-prefer}" \
       -e APP_DB="$DB_NAME" -e APP_USER="$DB_USER" -e APP_PASSWORD="$DB_PASSWORD" \

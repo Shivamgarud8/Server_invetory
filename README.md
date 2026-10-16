@@ -3,8 +3,8 @@
 A private web portal that replaces the three infrastructure spreadsheets (`Password.xlsx`, `Server Inventory.xlsx`, `Version.xlsx`). It keeps credentials, servers and deployed versions in one place, with role-based access and a full audit trail.
 
 ```
-Browser ──http──▶ :8085 tagid-portal-frontend (React UI, forwards /api) ──▶ :8090 tagid-portal-backend (FastAPI)
-                                                                                 ├─▶ PostgreSQL (existing server)
+Browser ──http──▶ :3006 tagid-portal-frontend (React UI, forwards /api) ──▶ :8090 tagid-portal-backend (FastAPI)
+                                                                                 ├─▶ :5269 server-db (own PostgreSQL)
                                                                                  └─▶ HashiCorp Vault (or local AES-256-GCM)
 ```
 
@@ -55,15 +55,14 @@ Rules that are always enforced:
 
 ## Deploy
 
-**Full step-by-step guide: [INSTALL.md](INSTALL.md)**. It covers every `.env` variable, existing vs separate vs bundled PostgreSQL, ports, backups, troubleshooting, and how to move the portal to another server.
+**Full step-by-step guide: [INSTALL.md](INSTALL.md)**. It covers every `.env` variable, the built-in `server-db` database or an existing PostgreSQL, ports, backups, troubleshooting, and how to move the portal to another server.
 
 Quick version:
 
 ```bash
 ./scripts/init-env.sh                    # writes a complete .env: all passwords/keys generated, this server's IP filled in
-nano .env                                # set DB_ADMIN_PASSWORD (and DB_HOST / DB_PORT if PostgreSQL is elsewhere)
-./scripts/setup-db.sh                    # creates the DB + least-privilege user using the postgres superuser
-docker compose up -d --build             # open http://<server-ip>:8085 and log in as admin with the printed password
+docker compose up -d --build             # starts server-db (:5269), API (:8090), UI (:3006)
+                                         # open http://<server-ip>:3006 and log in as admin with the printed password
 ```
 
 Everything that differs between servers lives in `.env`: this server's label, URL, bind IP and ports, plus the DB host, port, name, user, password and superuser password. Moving from one server to another is a matter of copying `.env`, editing a few lines, and restoring a backup (`scripts/backup.sh` / `scripts/restore.sh`).

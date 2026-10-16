@@ -8,20 +8,19 @@ This guide covers a fresh install, connecting to your PostgreSQL server, day-to-
 
 ```
                        ┌──────────────── Application server (e.g. srv-106, 10.129.0.106) ────────────────┐
- Browser ── http ────▶ │ :8085  tagid-portal-frontend  (web UI, forwards /api ──▶ backend)               │
+ Browser ── http ────▶ │ :3006  tagid-portal-frontend  (web UI, forwards /api ──▶ backend)               │
  (curl / scripts) ───▶ │ :8090  tagid-portal-backend   (FastAPI)                                          │
-                       └───────────────────────────────────────│─────────────────────────────────────────┘
-                                                               ▼
-                                     PostgreSQL (DB_HOST:DB_PORT, same box or a separate DB server)
+ (pgAdmin, backups) ─▶ │ :5269  server-db              (PostgreSQL, this portal's own database)            │
+                       └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 | Container | Built from | Host port | Purpose |
 |---|---|---|---|
-| `tagid-portal-frontend` | `frontend/Dockerfile` (Node build → small static web server) | `FRONTEND_PORT` (8085) | Web UI. Forwards `/api` to the backend, so the browser only ever talks to one address |
+| `tagid-portal-frontend` | `frontend/Dockerfile` (Node build → small static web server) | `FRONTEND_PORT` (3006) | Web UI. Forwards `/api` to the backend, so the browser only ever talks to one address |
 | `tagid-portal-backend` | `backend/Dockerfile` (Python 3.12 slim, non-root) | `BACKEND_PORT` (8090) | API. Checks the DB connection and runs migrations automatically on start |
-| `tagid-portal-postgres` | `postgres:18-alpine` (optional, `--profile bundled-db`) | not published | Only if you don't use an existing PostgreSQL |
+| `server-db` | `postgres:18-alpine` (enabled by `COMPOSE_PROFILES=server-db`, the default) | `DB_PORT` (5269) | The portal's **own** database. Your other PostgreSQL servers are never touched. Optional: point the portal at an existing PostgreSQL instead (section 5) |
 
-There is no separate nginx or reverse proxy. You open the portal directly at **`http://<server-ip>:8085`**.
+There is no separate nginx or reverse proxy. You open the portal directly at **`http://<server-ip>:3006`**.
 
 Everything the deployment needs comes from **one file: `.env`**.
 
@@ -34,8 +33,8 @@ Everything the deployment needs comes from **one file: `.env`**.
 | OS | Ubuntu 22.04/24.04, or any Linux with Docker |
 | Docker | Engine 24+ with the Compose v2 plugin (`docker compose version`) |
 | Resources | 1 vCPU, 1 GB RAM, 2 GB disk (plus database storage) |
-| PostgreSQL | 13 or newer (existing server, or the bundled container) |
-| Network | `FRONTEND_PORT` (default 8085) reachable by users; `BACKEND_PORT` (8090) only if you call the API directly. The DB port must be reachable **from the app server only** |
+| PostgreSQL | Included (`server-db` container). Or an existing PostgreSQL 13+ |
+| Network | Free ports on the server: `FRONTEND_PORT` 3006 (users), `BACKEND_PORT` 8090 (API), `DB_PORT` 5269 (database — keep it firewalled to admins only) |
 | Tools | `git`, `openssl` |
 
 ---
@@ -58,13 +57,12 @@ One command creates a complete `.env`. It generates every password and key and f
 ./scripts/init-env.sh                              # auto-detects this server's IP and hostname
 # or be explicit:
 ./scripts/init-env.sh --ip 10.129.0.106 --label srv-106
-./scripts/init-env.sh --db-host 10.129.0.13 --db-port 5455   # PostgreSQL elsewhere / non-default port
-./scripts/init-env.sh --bundled-db                 # use the bundled PostgreSQL container
+./scripts/init-env.sh --db-host 10.129.0.13 --db-port 5432   # use an existing PostgreSQL instead of server-db
 ```
 
 It prints the first-login password. The file gets permissions `600`. If a `.env` already exists, the script refuses to overwrite it; `--force` replaces it and keeps a backup.
 
-Afterwards, open `.env` and set **`DB_ADMIN_PASSWORD`** (your PostgreSQL superuser password). Check `DB_HOST` if PostgreSQL is not on this server.
+With the default **server-db** there is nothing else to fill in, so go straight to section 7. Only if you use an existing PostgreSQL (`--db-host`) do you also set `DB_ADMIN_PASSWORD` and run `setup-db.sh` (section 5).
 
 `.env` lists **every** setting. An empty value (`KEY=`) means "use the default", or for keys and passwords, "generate automatically".
 
@@ -76,21 +74,22 @@ Afterwards, open `.env` and set **`DB_ADMIN_PASSWORD`** (your PostgreSQL superus
 |---|---|---|
 | `SERVER_LABEL` | hostname | Shown in the top bar, login page and browser tab |
 | `APP_SERVER_IP` | this server's IP | Informational only |
-| `PUBLIC_URL` | `http://<IP>:8085` | Address users open (no trailing slash). Must match `FRONTEND_PORT` |
+| `PUBLIC_URL` | `http://<IP>:3006` | Address users open (no trailing slash). Must match `FRONTEND_PORT` |
 | `BIND_IP` | `0.0.0.0` | Interface the ports listen on. Set this server's private IP to keep the portal off other interfaces |
-| `FRONTEND_PORT` | `8085` | Web UI port: `http://<IP>:8085` |
+| `FRONTEND_PORT` | `3006` | Web UI port: `http://<IP>:3006` |
 | `BACKEND_PORT` | `8090` | API port: `http://<IP>:8090/api/health` |
 
 **2. Database server**
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DB_HOST` | this server's IP | PostgreSQL IP **as seen from the backend container** (see section 5) |
-| `DB_PORT` | `5432` | PostgreSQL port |
+| `COMPOSE_PROFILES` | `server-db` | Starts the portal's own database container. Leave it empty to use an existing PostgreSQL |
+| `DB_HOST` | `server-db` | `server-db`, or the IP of an existing PostgreSQL **as seen from the backend container** |
+| `DB_PORT` | `5269` | Port of `server-db` (inside Docker and on the server). For an existing PostgreSQL, its port |
 | `DB_NAME` / `DB_USER` | `tagid_infra_manager` / `infra_manager_app` | Dedicated database and least-privilege user |
-| `DB_PASSWORD` | *(generated)* | Password for `DB_USER`. `setup-db.sh` applies it |
+| `DB_PASSWORD` | *(generated)* | Password for `DB_USER`. `server-db` is created with it on first start |
 | `DB_SSLMODE` | `prefer` | Use `require` when the DB is on another machine |
-| `DB_ADMIN_USER` / `DB_ADMIN_PASSWORD` | `postgres` / **you fill this** | Superuser, only used once by `setup-db.sh`. Delete the password afterwards |
+| `DB_ADMIN_USER` / `DB_ADMIN_PASSWORD` | `postgres` / *(empty)* | Existing PostgreSQL only: superuser used once by `setup-db.sh`. Not needed with `server-db` |
 | `DATABASE_URL` | *(empty)* | A full connection URL. If set, it replaces the `DB_*` values |
 
 **3. Application**
@@ -100,7 +99,7 @@ Afterwards, open `.env` and set **`DB_ADMIN_PASSWORD`** (your PostgreSQL superus
 | `APP_NAME` | `TagID Infra Manager` | Footer and browser title |
 | `APP_ENV` | `production` | `development` enables `/api/docs` |
 | `APP_WORKERS` | `2` | Backend worker processes |
-| `APP_VERSION` | `1.4.0` | Docker image tag |
+| `APP_VERSION` | `1.5.0` | Docker image tag |
 | `TZ` | `Asia/Kolkata` | Time zone |
 | `DEFAULT_THEME` | `system` | `light`, `dark` or `system`. Each user can change it |
 
@@ -129,7 +128,7 @@ Afterwards, open `.env` and set **`DB_ADMIN_PASSWORD`** (your PostgreSQL superus
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DATA_DIR` | `/tagid_data/infra-manager` | Data folder for the bundled PostgreSQL container |
+| `DATA_DIR` | `/tagid_data/infra-manager` | `server-db` stores its database files in `DATA_DIR/postgres` |
 | `BACKUP_DIR` | `backups` | Where `backup.sh` writes dumps. A relative path means inside the project folder |
 | `BACKUP_RETENTION_DAYS` | `30` | Older dumps are deleted |
 | `CREDENTIAL_EXPIRY_WARNING_DAYS` | `30` | How far ahead the dashboard flags expiring credentials |
@@ -149,11 +148,24 @@ Afterwards, open `.env` and set **`DB_ADMIN_PASSWORD`** (your PostgreSQL superus
 
 ---
 
-## 5. Prepare the database
+## 5. Database
 
-Choose the scenario that matches your setup.
+### Default — the portal's own `server-db` container
 
-### A. Existing PostgreSQL on the same server (for example the `tagid-postgres` container on 106)
+Nothing to prepare. With `COMPOSE_PROFILES=server-db`, `DB_HOST=server-db` and `DB_PORT=5269` (what `init-env.sh` writes), `docker compose up -d` also starts **`server-db`**:
+
+- a dedicated PostgreSQL 18 that creates `DB_NAME` and `DB_USER` with `DB_PASSWORD` on first start
+- listening on **port 5269**, inside Docker and on the server (`BIND_IP:5269`), for pgAdmin or `psql`
+- data stored in `${DATA_DIR}/postgres` on the server, so it survives restarts and upgrades
+- your other PostgreSQL servers and ports are **not touched**
+
+Connect from the server: `psql -h 127.0.0.1 -p 5269 -U infra_manager_app tagid_infra_manager`. Firewall port 5269 so only admins can reach it.
+
+### Optional — use an existing PostgreSQL instead
+
+Empty `COMPOSE_PROFILES`, then pick the case that matches.
+
+#### A. Existing PostgreSQL on the same server
 
 The backend runs in its own Docker network, so `localhost` would point at the backend container itself. Use the **server's private IP** instead:
 
@@ -164,7 +176,7 @@ DB_ADMIN_USER=postgres
 DB_ADMIN_PASSWORD=<postgres superuser password>
 ```
 
-### B. PostgreSQL on a separate database server
+#### B. PostgreSQL on a separate database server
 
 ```ini
 DB_HOST=10.129.0.13         # DB server IP
@@ -184,7 +196,7 @@ host  tagid_infra_manager  infra_manager_app  10.129.0.106/32  scram-sha-256
 
 Then reload PostgreSQL and open the firewall for that IP only, e.g. `sudo ufw allow from 10.129.0.106 to any port 5432 proto tcp`.
 
-### Create the database and user (A and B)
+#### Create the database and user (A and B)
 
 ```bash
 ./scripts/setup-db.sh
@@ -206,29 +218,20 @@ REVOKE ALL ON SCHEMA public FROM PUBLIC;
 ```
 </details>
 
-### C. Bundled PostgreSQL container (no existing server)
-
-```ini
-DB_HOST=tagid-portal-postgres
-DB_PORT=5432
-```
-
-Start everything with `--profile bundled-db` (see step 7). The container creates `DB_NAME` and `DB_USER` on its own, stores its data in `${DATA_DIR}/postgres`, and is never exposed outside Docker.
-
-> **Security:** your current `tagid-postgres` publishes `0.0.0.0:5432`. Firewall that port so only the app server(s) can reach it.
-
 ---
 
 ## 6. Ports & access
 
 | What | URL |
 |---|---|
-| Web UI | `http://<server-ip>:FRONTEND_PORT`, e.g. `http://10.129.0.106:8085` |
+| Web UI | `http://<server-ip>:FRONTEND_PORT`, e.g. `http://10.129.0.106:3006` |
 | API health check | `http://<server-ip>:BACKEND_PORT/api/health`, e.g. `http://10.129.0.106:8090/api/health` |
+| Database (server-db) | `<server-ip>:DB_PORT`, e.g. `10.129.0.106:5269` |
 
-- To change ports, edit `FRONTEND_PORT` / `BACKEND_PORT`, then **also update `PUBLIC_URL`** to the new frontend port.
+- To change ports, edit `FRONTEND_PORT` / `BACKEND_PORT` / `DB_PORT`. If you change the frontend port, **also update `PUBLIC_URL`**.
+- Check that a port is free before using it: `sudo ss -ltnp | grep -E ':(3006|8090|5269)\b'` should print nothing.
 - Don't add `APP_PORT` to `.env`. The backend always uses 8080 inside its container, and `BACKEND_PORT` decides the port on the server.
-- Open the ports in the server firewall if needed, e.g. `sudo ufw allow from 10.129.0.0/16 to any port 8085 proto tcp`.
+- Open the ports in the server firewall if needed, e.g. `sudo ufw allow from 10.129.0.0/16 to any port 3006 proto tcp`.
 
 > **Security note:** on plain `http://`, traffic, including passwords you reveal, crosses the network unencrypted. Only use it on a trusted internal network or VPN. If you later put a reverse proxy with HTTPS in front, set `PUBLIC_URL=https://…` and secure cookies switch on automatically.
 
@@ -237,8 +240,7 @@ Start everything with `--profile bundled-db` (see step 7). The container creates
 ## 7. Start
 
 ```bash
-docker compose up -d --build                         # existing PostgreSQL (A/B)
-docker compose --profile bundled-db up -d --build    # bundled PostgreSQL (C)
+docker compose up -d --build                         # starts server-db (if enabled), backend, frontend
 
 docker compose ps
 docker compose logs -f tagid-portal-backend          # look for "PostgreSQL OK" and "Application startup complete"
@@ -299,19 +301,7 @@ Everything lives in PostgreSQL, plus `.env`. Copy the old `.env`, keep its keys,
 **Never change these when moving:** `APP_SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`, and `DB_PASSWORD` (when restoring a backup).
 If you started with empty keys, get the generated values with `./scripts/show-secrets.sh` on the old server and paste them into `.env`.
 
-### Case 1 — Only the app moves, the database stays where it is
-
-```bash
-# on the NEW server
-git clone https://github.com/Shivamgarud8/Server_invetory.git /opt/tagid-infra-manager && cd /opt/tagid-infra-manager
-scp srv-106:/opt/tagid-infra-manager/.env .
-nano .env      # change SERVER_LABEL, APP_SERVER_IP, PUBLIC_URL, BIND_IP
-# allow the new server's IP in the DB server's pg_hba.conf and firewall
-docker compose up -d --build
-# check everything works, then on 106: docker compose down
-```
-
-### Case 2 — Both the app and the database move
+### With `server-db` (default)
 
 ```bash
 # 1. on 106
@@ -322,18 +312,22 @@ docker compose stop tagid-portal-backend    # stop changes during the dump
 git clone https://github.com/Shivamgarud8/Server_invetory.git /opt/tagid-infra-manager && cd /opt/tagid-infra-manager
 scp srv-106:/opt/tagid-infra-manager/.env .
 scp srv-106:/opt/tagid-infra-manager/backups/<file>.dump /tmp/
+nano .env      # change: SERVER_LABEL, APP_SERVER_IP, PUBLIC_URL, BIND_IP
+               # keep:   DB_*, APP_SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY
 
-nano .env      # change: SERVER_LABEL, APP_SERVER_IP, PUBLIC_URL, BIND_IP, DB_HOST, DB_PORT,
-               #         DB_ADMIN_PASSWORD (the new server's postgres password)
-               # keep:   DB_NAME, DB_USER, DB_PASSWORD, APP_SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY
-
-./scripts/setup-db.sh                       # creates the empty DB and user on the new DB server
+docker compose up -d server-db              # start only the database
 ./scripts/restore.sh /tmp/<file>.dump       # type the DB name to confirm
 docker compose up -d --build
 
 # 3. check: log in, open a credential, click Show — the password must decrypt.
 #    Then point users at the new PUBLIC_URL and on 106: docker compose down
 ```
+
+### With an existing PostgreSQL
+
+**Only the app moves (the database stays):** copy `.env`, change `SERVER_LABEL`, `APP_SERVER_IP`, `PUBLIC_URL` and `BIND_IP`, allow the new server's IP in the DB server's `pg_hba.conf` and firewall, then run `docker compose up -d --build`.
+
+**The database moves too:** as above, but on the new server set `DB_HOST`, `DB_PORT` and `DB_ADMIN_PASSWORD`, then run `./scripts/setup-db.sh` → `./scripts/restore.sh /tmp/<file>.dump` → `docker compose up -d --build`.
 
 This procedure was tested end to end. Every stored password decrypted correctly on the new database.
 
@@ -354,7 +348,7 @@ This procedure was tested end to end. Every stored password decrypted correctly 
 | `STARTUP ERROR: DB_HOST=… is not a valid IP address` | Typo in `DB_HOST` (e.g. `10.8129.0.106` instead of `10.129.0.106`) |
 | `STARTUP ERROR: cannot reach PostgreSQL at …` | Wrong `DB_HOST`/`DB_PORT`, PostgreSQL not listening on that IP, or a firewall in between. Test from the server: `nc -zv <DB_HOST> <DB_PORT>` |
 | Login seems to work but you're sent back to the login page | `COOKIE_SECURE=true` while using `http://`. Leave `COOKIE_SECURE` empty |
-| Browser can't open `http://<ip>:8085` | Check `docker compose ps`, that `FRONTEND_PORT` is open in the firewall, and that `BIND_IP` isn't `127.0.0.1` |
+| Browser can't open `http://<ip>:3006` | Check `docker compose ps`, that `FRONTEND_PORT` is open in the firewall, and that `BIND_IP` isn't `127.0.0.1` |
 | `port is already allocated` | Another service uses that port. Change `FRONTEND_PORT` / `BACKEND_PORT` (and `PUBLIC_URL`) |
 
 ---

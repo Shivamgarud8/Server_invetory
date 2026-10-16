@@ -2,8 +2,7 @@ name: tagid-infra-manager
 
 # Open the portal at  http://<server-ip>:FRONTEND_PORT   (API also on BACKEND_PORT)
 # Default: connect to the PostgreSQL server configured by DB_HOST / DB_PORT / DB_NAME in .env.
-# To run a dedicated PostgreSQL container instead: set DB_HOST=tagid-portal-postgres and
-#   docker compose --profile bundled-db up -d
+# Dedicated DB container "server-db": set COMPOSE_PROFILES=server-db and DB_HOST=server-db in .env.
 
 x-logging: &logging
   driver: json-file
@@ -12,12 +11,12 @@ x-logging: &logging
 services:
   tagid-portal-frontend:
     build: ./frontend
-    image: tagid-infra-manager-ui:${APP_VERSION:-1.4.0}
+    image: tagid-infra-manager-ui:${APP_VERSION:-1.5.0}
     container_name: tagid-portal-frontend
     restart: unless-stopped
     depends_on: [tagid-portal-backend]
     ports:
-      - "${BIND_IP:-0.0.0.0}:${FRONTEND_PORT:-8085}:8080"   # web UI (also proxies /api to the backend)
+      - "${BIND_IP:-0.0.0.0}:${FRONTEND_PORT:-3006}:8080"   # web UI (also proxies /api to the backend)
     read_only: true
     tmpfs: [/tmp, /var/cache/nginx]
     security_opt: ["no-new-privileges:true"]
@@ -27,9 +26,13 @@ services:
 
   tagid-portal-backend:
     build: ./backend
-    image: tagid-infra-manager-api:${APP_VERSION:-1.4.0}
+    image: tagid-infra-manager-api:${APP_VERSION:-1.5.0}
     container_name: tagid-portal-backend
     restart: unless-stopped
+    depends_on:
+      server-db:
+        condition: service_healthy
+        required: false        # only when the server-db profile is enabled
     env_file: .env
     environment:
       TZ: ${TZ:-Asia/Kolkata}
@@ -48,24 +51,29 @@ services:
     networks: [edge, db]
     logging: *logging
 
-  tagid-portal-postgres:
-    profiles: [bundled-db]
+  # Dedicated database for this portal (enabled by COMPOSE_PROFILES=server-db in .env).
+  # Your other PostgreSQL servers are never touched.
+  server-db:
+    profiles: [server-db]
     image: postgres:18-alpine
-    container_name: tagid-portal-postgres
+    container_name: server-db
     restart: unless-stopped
+    command: ["postgres", "-c", "port=${DB_PORT:-5269}"]
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       TZ: ${TZ:-Asia/Kolkata}
+    ports:
+      - "${BIND_IP:-0.0.0.0}:${DB_PORT:-5269}:${DB_PORT:-5269}"   # e.g. for pgAdmin / backups
     volumes:
       - ${DATA_DIR:-/tagid_data/infra-manager}/postgres:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -p ${DB_PORT:-5269} -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
       timeout: 5s
-      retries: 5
-    networks: [db]          # never published to the host
+      retries: 20
+    networks: [db]
     logging: *logging
 
 volumes:
@@ -73,5 +81,4 @@ volumes:
 
 networks:
   edge: {}
-  db:
-    internal: true
+  db: {}
