@@ -104,7 +104,7 @@ Add a line to `.env` only if you need to change one of these defaults.
 | `APP_SECRET_KEY` / `CREDENTIAL_ENCRYPTION_KEY` | *(auto-generated)* | Set these only when moving servers (section 9). A value in `.env` always wins over the generated one |
 | `VAULT_PROVIDER`, `VAULT_ADDR`, `VAULT_TOKEN` | `local` | Use `hashicorp` to keep passwords in HashiCorp Vault instead of encrypted in PostgreSQL |
 | `VAULT_MOUNT`, `VAULT_PATH_PREFIX`, `VAULT_NAMESPACE`, `VAULT_CA_CERT` | `secret`, `tagid-infra-manager` | Advanced Vault settings |
-| `APP_WORKERS` / `APP_VERSION` / `APP_ENV` | `2` / `1.0.0` / `production` | Worker processes / image tag / `development` turns on the API docs at `/api/docs` |
+| `APP_WORKERS` / `APP_VERSION` / `APP_ENV` | `2` / `1.1.0` / `production` | Worker processes / image tag / `development` turns on the API docs at `/api/docs` |
 
 > `.env` values are read literally. Don't wrap them in quotes and don't use `$` in passwords (Docker Compose treats `$` as a variable). `generate-secrets.sh` only outputs safe characters.
 
