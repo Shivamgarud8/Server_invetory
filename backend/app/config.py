@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     login_max_failed_attempts: int = 5
     login_lockout_minutes: int = 15
     login_rate_limit_per_minute: int = 20
-    cookie_secure: bool = True
+    # Empty = automatic: secure cookies only when PUBLIC_URL is https:// (plain-IP http access needs false)
+    cookie_secure: bool | None = None
 
     # Credential vault: "local" (AES-256-GCM in PostgreSQL) or "hashicorp" (Vault KV v2)
     vault_provider: str = "local"
@@ -105,6 +106,12 @@ class Settings(BaseSettings):
             "postgresql+psycopg", username=self.db_user, password=self.db_password, host=self.db_host,
             port=self.db_port, database=self.db_name, query={"sslmode": self.db_sslmode},
         )
+
+    @property
+    def secure_cookies(self) -> bool:
+        if self.cookie_secure is not None:
+            return self.cookie_secure
+        return self.public_url.lower().startswith("https://")
 
     @property
     def origins(self) -> list[str]:

@@ -2,8 +2,6 @@
 .env.*
 *.env
 !.env.example
-nginx/certs/*
-!nginx/certs/.gitkeep
 backups/
 __pycache__/
 *.pyc

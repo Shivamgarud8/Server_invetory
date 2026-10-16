@@ -124,7 +124,7 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
         SESSION_COOKIE,
         token,
         httponly=True,
-        secure=s.cookie_secure,
+        secure=s.secure_cookies,
         samesite="strict",
         max_age=s.session_absolute_hours * 3600,
         path="/",

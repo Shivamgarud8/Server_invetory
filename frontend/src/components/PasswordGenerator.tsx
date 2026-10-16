@@ -14,7 +14,25 @@ function loadPrefs(): GenOptions {
   }
 }
 
+/** Fallback for plain-http pages, where browsers disable navigator.clipboard. */
+function legacyCopy(text: string) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  if (!ok) throw new Error("Copy failed — select and copy manually");
+}
+
 export async function copyText(text: string, clearAfterMs = 30_000) {
+  if (!window.isSecureContext || !navigator.clipboard) {
+    legacyCopy(text); // no auto-clear possible without the clipboard API
+    return;
+  }
   await navigator.clipboard.writeText(text);
   if (clearAfterMs) {
     setTimeout(async () => {
@@ -72,7 +90,7 @@ export function GeneratorPanel({ onUse }: { onUse?: (pw: string) => void }) {
       <StrengthMeter value={pw} />
       <div className="row wrap">
         <button className="btn" onClick={() => gen({ ...o, keywords: kwText.split(/[\s,]+/).filter(Boolean) })}>↻ Generate password</button>
-        <button className="btn" disabled={!pw} onClick={() => copyText(pw).then(() => toast("Copied — clipboard clears in 30s"))}>⧉ Copy</button>
+        <button className="btn" disabled={!pw} onClick={() => copyText(pw).then(() => toast(window.isSecureContext ? "Copied — clipboard clears in 30s" : "Copied"))}>⧉ Copy</button>
         {onUse && <button className="btn primary" disabled={!pw} onClick={() => onUse(pw)}>✓ Use password</button>}
       </div>
 

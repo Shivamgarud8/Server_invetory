@@ -3,9 +3,9 @@
 A private web portal that replaces the three infrastructure spreadsheets (`Password.xlsx`, `Server Inventory.xlsx`, `Version.xlsx`). It keeps credentials, servers and deployed versions in one place, with role-based access and a full audit trail.
 
 ```
-Browser ──HTTPS──▶ tagid-portal-nginx ──▶ tagid-portal-frontend   (React SPA)
-                                     └──▶ tagid-portal-backend    (FastAPI) ──▶ PostgreSQL (existing server)
-                                                                            └─▶ HashiCorp Vault (or local AES-256-GCM)
+Browser ──http──▶ :8085 tagid-portal-frontend (React UI, forwards /api) ──▶ :8090 tagid-portal-backend (FastAPI)
+                                                                                 ├─▶ PostgreSQL (existing server)
+                                                                                 └─▶ HashiCorp Vault (or local AES-256-GCM)
 ```
 
 ## Modules
@@ -55,19 +55,18 @@ Rules that are always enforced:
 
 ## Deploy
 
-**Full step-by-step guide: [INSTALL.md](INSTALL.md)**. It covers every `.env` variable, existing vs separate vs bundled PostgreSQL, TLS, backups, troubleshooting, and how to move the portal to another server.
+**Full step-by-step guide: [INSTALL.md](INSTALL.md)**. It covers every `.env` variable, existing vs separate vs bundled PostgreSQL, ports, backups, troubleshooting, and how to move the portal to another server.
 
 Quick version:
 
 ```bash
 ./scripts/init-env.sh                    # writes a complete .env: all passwords/keys generated, this server's IP filled in
-nano .env                                # set DB_ADMIN_PASSWORD (and DB_HOST if PostgreSQL is elsewhere)
+nano .env                                # set DB_ADMIN_PASSWORD (and DB_HOST / DB_PORT if PostgreSQL is elsewhere)
 ./scripts/setup-db.sh                    # creates the DB + least-privilege user using the postgres superuser
-./scripts/gen-self-signed-cert.sh <server-ip>   # or copy your own tls.crt/tls.key into nginx/certs/
-docker compose up -d --build             # migrations run automatically; log in as admin with the printed password
+docker compose up -d --build             # open http://<server-ip>:8085 and log in as admin with the printed password
 ```
 
-Everything that differs between servers lives in `.env`: this server's label, URL and bind IP, plus the DB host, port, name, user, password and superuser password. Moving from one server to another is a matter of copying `.env`, editing a few lines, and restoring a backup (`scripts/backup.sh` / `scripts/restore.sh`).
+Everything that differs between servers lives in `.env`: this server's label, URL, bind IP and ports, plus the DB host, port, name, user, password and superuser password. Moving from one server to another is a matter of copying `.env`, editing a few lines, and restoring a backup (`scripts/backup.sh` / `scripts/restore.sh`).
 
 ### Credential storage (`VAULT_PROVIDER`)
 
@@ -89,10 +88,10 @@ path "secret/metadata/tagid-infra-manager/*" { capabilities = ["delete"] }
 ## Security controls
 
 - Argon2id password hashing and a password policy (12+ characters, mixed character classes).
-- Login lockout after 5 failures (15 min), per-IP limits in both the app and nginx, and constant-time handling of unknown usernames.
+- Login lockout after 5 failures (15 min), per-IP login rate limits, and constant-time handling of unknown usernames.
 - Optional TOTP 2FA, with the secret encrypted at rest.
-- Server-side sessions stored hashed in the DB, sent as an `HttpOnly; Secure; SameSite=Strict` cookie. 30 min idle timeout (enforced on both server and client) and a 12 h absolute limit. Sessions can be revoked.
-- CSRF protection via a required custom header. Strict CSP, HSTS, `X-Frame-Options: DENY`, `no-store` on API responses.
+- Server-side sessions stored hashed in the DB, sent as an `HttpOnly; SameSite=Strict` cookie (`Secure` too when served over HTTPS). 30 min idle timeout (enforced on both server and client) and a 12 h absolute limit. Sessions can be revoked.
+- CSRF protection via a required custom header. Strict CSP, `X-Frame-Options: DENY`, `no-store` on API responses.
 - Optional `TRUSTED_NETWORKS` CIDR allow-list. API docs are disabled in production.
 - Passwords never appear in logs, audit entries, exports, list responses, or browser storage.
 - Containers are read-only, run as non-root, with `cap_drop: ALL` and `no-new-privileges`. The DB network is `internal`.

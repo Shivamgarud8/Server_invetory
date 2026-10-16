@@ -43,7 +43,7 @@ export function SecretCell({ credentialId, hasSecret }: { credentialId: number; 
     setBusy(true);
     try {
       await copyText(await fetchSecret("copy"));
-      toast("Password copied — clipboard clears in 30s");
+      toast(window.isSecureContext ? "Password copied — clipboard clears in 30s" : "Password copied");
     } catch (e) {
       toast((e as Error).message, true);
     } finally {

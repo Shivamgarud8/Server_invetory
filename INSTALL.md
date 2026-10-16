@@ -7,20 +7,21 @@ This guide covers a fresh install, connecting to your PostgreSQL server, day-to-
 ## 1. What gets deployed
 
 ```
-                    ┌───────────────────── Application server (e.g. srv-106) ─────────────────────┐
- Browser ──HTTPS──▶ │ tagid-portal-nginx :443 ──▶ tagid-portal-frontend (React, static)            │
-                    │                          └─▶ tagid-portal-backend  (FastAPI :8080)           │
-                    └──────────────────────────────────────│───────────────────────────────────────┘
-                                                           ▼
-                                   PostgreSQL (DB_HOST:DB_PORT, same box or a separate DB server)
+                       ┌──────────────── Application server (e.g. srv-106, 10.129.0.106) ────────────────┐
+ Browser ── http ────▶ │ :8085  tagid-portal-frontend  (web UI, forwards /api ──▶ backend)               │
+ (curl / scripts) ───▶ │ :8090  tagid-portal-backend   (FastAPI)                                          │
+                       └───────────────────────────────────────│─────────────────────────────────────────┘
+                                                               ▼
+                                     PostgreSQL (DB_HOST:DB_PORT, same box or a separate DB server)
 ```
 
-| Container | Built from | Purpose |
-|---|---|---|
-| `tagid-portal-nginx` | `nginx:1.27-alpine` + `nginx/default.conf.template` | TLS, security headers, rate limits, routing |
-| `tagid-portal-frontend` | `frontend/Dockerfile` (Node build → unprivileged nginx) | Web UI |
-| `tagid-portal-backend` | `backend/Dockerfile` (Python 3.12 slim, non-root) | API. Runs database migrations automatically on start |
-| `tagid-portal-postgres` | `postgres:18-alpine` (optional, `--profile bundled-db`) | Only if you don't use an existing PostgreSQL |
+| Container | Built from | Host port | Purpose |
+|---|---|---|---|
+| `tagid-portal-frontend` | `frontend/Dockerfile` (Node build → small static web server) | `FRONTEND_PORT` (8085) | Web UI. Forwards `/api` to the backend, so the browser only ever talks to one address |
+| `tagid-portal-backend` | `backend/Dockerfile` (Python 3.12 slim, non-root) | `BACKEND_PORT` (8090) | API. Checks the DB connection and runs migrations automatically on start |
+| `tagid-portal-postgres` | `postgres:18-alpine` (optional, `--profile bundled-db`) | not published | Only if you don't use an existing PostgreSQL |
+
+There is no separate nginx or reverse proxy. You open the portal directly at **`http://<server-ip>:8085`**.
 
 Everything the deployment needs comes from **one file: `.env`**.
 
@@ -34,7 +35,7 @@ Everything the deployment needs comes from **one file: `.env`**.
 | Docker | Engine 24+ with the Compose v2 plugin (`docker compose version`) |
 | Resources | 1 vCPU, 1 GB RAM, 2 GB disk (plus database storage) |
 | PostgreSQL | 13 or newer (existing server, or the bundled container) |
-| Network | Port 443 (and 80 for the redirect) reachable by users. The DB port must be reachable **from the app server only** |
+| Network | `FRONTEND_PORT` (default 8085) reachable by users; `BACKEND_PORT` (8090) only if you call the API directly. The DB port must be reachable **from the app server only** |
 | Tools | `git`, `openssl` |
 
 ---
@@ -56,8 +57,8 @@ One command creates a complete `.env`. It generates every password and key and f
 ```bash
 ./scripts/init-env.sh                              # auto-detects this server's IP and hostname
 # or be explicit:
-./scripts/init-env.sh --ip 10.80.0.106 --label srv-106
-./scripts/init-env.sh --db-host 10.80.0.13          # PostgreSQL on another server
+./scripts/init-env.sh --ip 10.129.0.106 --label srv-106
+./scripts/init-env.sh --db-host 10.129.0.13 --db-port 5455   # PostgreSQL elsewhere / non-default port
 ./scripts/init-env.sh --bundled-db                 # use the bundled PostgreSQL container
 ```
 
@@ -75,9 +76,10 @@ Afterwards, open `.env` and set **`DB_ADMIN_PASSWORD`** (your PostgreSQL superus
 |---|---|---|
 | `SERVER_LABEL` | hostname | Shown in the top bar, login page and browser tab |
 | `APP_SERVER_IP` | this server's IP | Informational only |
-| `PUBLIC_URL` | `https://<IP>` | Address users open (no trailing slash). Change it if you use a DNS name |
-| `HTTPS_BIND` | `0.0.0.0` | Interface nginx listens on. Set the private IP to keep the portal internal |
-| `HTTPS_PORT` / `HTTP_PORT` | `443` / `80` | Published ports. HTTP only redirects to HTTPS |
+| `PUBLIC_URL` | `http://<IP>:8085` | Address users open (no trailing slash). Must match `FRONTEND_PORT` |
+| `BIND_IP` | `0.0.0.0` | Interface the ports listen on. Set this server's private IP to keep the portal off other interfaces |
+| `FRONTEND_PORT` | `8085` | Web UI port: `http://<IP>:8085` |
+| `BACKEND_PORT` | `8090` | API port: `http://<IP>:8090/api/health` |
 
 **2. Database server**
 
@@ -97,9 +99,8 @@ Afterwards, open `.env` and set **`DB_ADMIN_PASSWORD`** (your PostgreSQL superus
 |---|---|---|
 | `APP_NAME` | `TagID Infra Manager` | Footer and browser title |
 | `APP_ENV` | `production` | `development` enables `/api/docs` |
-| `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8080` | Backend inside its container. **Keep as is**, because nginx expects 8080 |
 | `APP_WORKERS` | `2` | Backend worker processes |
-| `APP_VERSION` | `1.3.0` | Docker image tag |
+| `APP_VERSION` | `1.4.0` | Docker image tag |
 | `TZ` | `Asia/Kolkata` | Time zone |
 | `DEFAULT_THEME` | `system` | `light`, `dark` or `system`. Each user can change it |
 
@@ -110,10 +111,10 @@ Afterwards, open `.env` and set **`DB_ADMIN_PASSWORD`** (your PostgreSQL superus
 | `APP_SECRET_KEY` | *(generated)* | Protects 2FA secrets. **Keep it the same when moving servers** |
 | `SESSION_IDLE_MINUTES` / `SESSION_ABSOLUTE_HOURS` | `30` / `12` | Idle logout / maximum session length |
 | `LOGIN_MAX_FAILED_ATTEMPTS` / `LOGIN_LOCKOUT_MINUTES` | `5` / `15` | Account lockout after repeated failed logins |
-| `COOKIE_SECURE` | `true` | Only set `false` for plain-HTTP local development |
+| `COOKIE_SECURE` | *(empty = automatic)* | Secure cookies only when `PUBLIC_URL` is `https://`. **Must be empty or `false` for `http://` access**, otherwise login fails |
 | `ALLOWED_ORIGINS` | *(empty = `PUBLIC_URL`)* | Extra browser origins to allow |
 | `TRUSTED_NETWORKS` | private ranges | Only these CIDRs may use the portal. Empty means no restriction |
-| `TRUSTED_PROXIES` | Docker ranges | The nginx container network. Leave the default |
+| `TRUSTED_PROXIES` | Docker ranges | The frontend container network. Leave the default |
 
 **5. Credential vault**
 
@@ -157,7 +158,7 @@ Choose the scenario that matches your setup.
 The backend runs in its own Docker network, so `localhost` would point at the backend container itself. Use the **server's private IP** instead:
 
 ```ini
-DB_HOST=10.80.0.106        # this server's private IP
+DB_HOST=10.129.0.106        # this server's private IP
 DB_PORT=5432
 DB_ADMIN_USER=postgres
 DB_ADMIN_PASSWORD=<postgres superuser password>
@@ -166,7 +167,7 @@ DB_ADMIN_PASSWORD=<postgres superuser password>
 ### B. PostgreSQL on a separate database server
 
 ```ini
-DB_HOST=10.80.0.13         # DB server IP
+DB_HOST=10.129.0.13         # DB server IP
 DB_PORT=5432
 DB_SSLMODE=require         # optional, recommended for a remote DB
 ```
@@ -178,10 +179,10 @@ On the DB server, allow connections from the app server only:
 listen_addresses = '*'          # or the DB server's private IP
 
 # pg_hba.conf  (replace with your app server's IP)
-host  tagid_infra_manager  infra_manager_app  10.80.0.106/32  scram-sha-256
+host  tagid_infra_manager  infra_manager_app  10.129.0.106/32  scram-sha-256
 ```
 
-Then reload PostgreSQL and open the firewall for that IP only, e.g. `sudo ufw allow from 10.80.0.106 to any port 5432 proto tcp`.
+Then reload PostgreSQL and open the firewall for that IP only, e.g. `sudo ufw allow from 10.129.0.106 to any port 5432 proto tcp`.
 
 ### Create the database and user (A and B)
 
@@ -218,12 +219,18 @@ Start everything with `--profile bundled-db` (see step 7). The container creates
 
 ---
 
-## 6. TLS certificate
+## 6. Ports & access
 
-Put a certificate and its key at `nginx/certs/tls.crt` and `nginx/certs/tls.key`.
+| What | URL |
+|---|---|
+| Web UI | `http://<server-ip>:FRONTEND_PORT`, e.g. `http://10.129.0.106:8085` |
+| API health check | `http://<server-ip>:BACKEND_PORT/api/health`, e.g. `http://10.129.0.106:8090/api/health` |
 
-- **Internal CA or a real domain (recommended):** copy your certificate files there.
-- **Self-signed (quick start):** `./scripts/gen-self-signed-cert.sh infra.tagid.internal`. Browsers will show a warning until users trust the certificate.
+- To change ports, edit `FRONTEND_PORT` / `BACKEND_PORT`, then **also update `PUBLIC_URL`** to the new frontend port.
+- Don't add `APP_PORT` to `.env`. The backend always uses 8080 inside its container, and `BACKEND_PORT` decides the port on the server.
+- Open the ports in the server firewall if needed, e.g. `sudo ufw allow from 10.129.0.0/16 to any port 8085 proto tcp`.
+
+> **Security note:** on plain `http://`, traffic, including passwords you reveal, crosses the network unencrypted. Only use it on a trusted internal network or VPN. If you later put a reverse proxy with HTTPS in front, set `PUBLIC_URL=https://…` and secure cookies switch on automatically.
 
 ---
 
@@ -234,8 +241,8 @@ docker compose up -d --build                         # existing PostgreSQL (A/B)
 docker compose --profile bundled-db up -d --build    # bundled PostgreSQL (C)
 
 docker compose ps
-docker compose logs -f tagid-portal-backend          # look for "Application startup complete"
-curl -k https://127.0.0.1/api/health                 # {"status":"ok",...}
+docker compose logs -f tagid-portal-backend          # look for "PostgreSQL OK" and "Application startup complete"
+curl http://127.0.0.1:8090/api/health               # {"status":"ok",...}
 ```
 
 Database migrations run on their own every time the backend starts.
@@ -298,8 +305,7 @@ If you started with empty keys, get the generated values with `./scripts/show-se
 # on the NEW server
 git clone https://github.com/Shivamgarud8/Server_invetory.git /opt/tagid-infra-manager && cd /opt/tagid-infra-manager
 scp srv-106:/opt/tagid-infra-manager/.env .
-scp srv-106:/opt/tagid-infra-manager/nginx/certs/tls.* nginx/certs/
-nano .env      # change SERVER_LABEL, APP_SERVER_IP, PUBLIC_URL, HTTPS_BIND
+nano .env      # change SERVER_LABEL, APP_SERVER_IP, PUBLIC_URL, BIND_IP
 # allow the new server's IP in the DB server's pg_hba.conf and firewall
 docker compose up -d --build
 # check everything works, then on 106: docker compose down
@@ -315,10 +321,9 @@ docker compose stop tagid-portal-backend    # stop changes during the dump
 # 2. on the NEW server
 git clone https://github.com/Shivamgarud8/Server_invetory.git /opt/tagid-infra-manager && cd /opt/tagid-infra-manager
 scp srv-106:/opt/tagid-infra-manager/.env .
-scp srv-106:/opt/tagid-infra-manager/nginx/certs/tls.* nginx/certs/
 scp srv-106:/opt/tagid-infra-manager/backups/<file>.dump /tmp/
 
-nano .env      # change: SERVER_LABEL, APP_SERVER_IP, PUBLIC_URL, HTTPS_BIND, DB_HOST, DB_PORT,
+nano .env      # change: SERVER_LABEL, APP_SERVER_IP, PUBLIC_URL, BIND_IP, DB_HOST, DB_PORT,
                #         DB_ADMIN_PASSWORD (the new server's postgres password)
                # keep:   DB_NAME, DB_USER, DB_PASSWORD, APP_SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY
 
@@ -346,9 +351,11 @@ This procedure was tested end to end. Every stored password decrypted correctly 
 | "Unable to decrypt secret" after a move | `CREDENTIAL_ENCRYPTION_KEY` differs from the old server's. Copy the old value into `.env` |
 | 2FA codes rejected after a move | `APP_SECRET_KEY` wasn't carried over. Restore it in `.env`, or have an admin use **Reset 2FA** on each user |
 | `Access denied from this network` | Your IP isn't in `TRUSTED_NETWORKS` |
-| Login works but you're immediately logged out | You're on plain HTTP with `COOKIE_SECURE=true`. Use HTTPS |
-| nginx won't start | `nginx/certs/tls.crt` or `tls.key` is missing |
-| Port 443 already in use | Change `HTTPS_PORT`/`HTTP_PORT`, or set `HTTPS_BIND` to a specific IP |
+| `STARTUP ERROR: DB_HOST=… is not a valid IP address` | Typo in `DB_HOST` (e.g. `10.8129.0.106` instead of `10.129.0.106`) |
+| `STARTUP ERROR: cannot reach PostgreSQL at …` | Wrong `DB_HOST`/`DB_PORT`, PostgreSQL not listening on that IP, or a firewall in between. Test from the server: `nc -zv <DB_HOST> <DB_PORT>` |
+| Login seems to work but you're sent back to the login page | `COOKIE_SECURE=true` while using `http://`. Leave `COOKIE_SECURE` empty |
+| Browser can't open `http://<ip>:8085` | Check `docker compose ps`, that `FRONTEND_PORT` is open in the firewall, and that `BIND_IP` isn't `127.0.0.1` |
+| `port is already allocated` | Another service uses that port. Change `FRONTEND_PORT` / `BACKEND_PORT` (and `PUBLIC_URL`) |
 
 ---
 
@@ -356,10 +363,10 @@ This procedure was tested end to end. Every stored password decrypted correctly 
 
 The code lives at **https://github.com/Shivamgarud8/Server_invetory** (keep it **private**: it holds no secrets, but it describes your internal infrastructure).
 
-`.gitignore` keeps `.env`, TLS certificates, backups, `node_modules` and build output out of Git. Before every push, check:
+`.gitignore` keeps `.env`, backups, `node_modules` and build output out of Git. Before every push, check:
 
 ```bash
-git status --short      # .env, nginx/certs/tls.*, node_modules must NOT appear
+git status --short      # .env and node_modules must NOT appear
 ```
 
 Publishing your changes:
