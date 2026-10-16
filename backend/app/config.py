@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 from urllib.parse import urlsplit
 
@@ -7,7 +8,10 @@ from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Real environment variables (.env via docker compose) win over the auto-generated secrets file
+    model_config = SettingsConfigDict(
+        env_file=(os.environ.get("SECRETS_FILE", "/app/secrets/generated.env"), ".env"), extra="ignore"
+    )
 
     # Application
     app_name: str = "TagID Infra Manager"
@@ -60,8 +64,10 @@ class Settings(BaseSettings):
     backup_dir: str = "/tagid_data/infra-manager/backups"
 
     # Bootstrap
-    bootstrap_admin_enabled: bool = False
-    bootstrap_admin_username: str | None = None
+    # First admin is created automatically when there are no users; a random password is generated
+    # (and printed once in the backend log) unless BOOTSTRAP_ADMIN_PASSWORD is set
+    bootstrap_admin_enabled: bool = True
+    bootstrap_admin_username: str = "admin"
     bootstrap_admin_password: str | None = None
     bootstrap_admin_email: str | None = None
 

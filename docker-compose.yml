@@ -50,6 +50,8 @@ services:
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
+    volumes:
+      - portal-secrets:/app/secrets           # auto-generated APP_SECRET_KEY / CREDENTIAL_ENCRYPTION_KEY
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach PostgreSQL / Vault running on the Docker host
     networks: [edge, db]
@@ -74,6 +76,9 @@ services:
       retries: 5
     networks: [db]          # never published to the host
     logging: *logging
+
+volumes:
+  portal-secrets: {}
 
 networks:
   edge: {}

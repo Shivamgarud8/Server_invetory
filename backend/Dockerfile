@@ -15,7 +15,8 @@ COPY app ./app
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh \
- && useradd --system --uid 10001 --no-create-home app
+ && useradd --system --uid 10001 --no-create-home app \
+ && mkdir -p /app/secrets && chown 10001:10001 /app/secrets && chmod 700 /app/secrets
 USER 10001
 
 EXPOSE 8080

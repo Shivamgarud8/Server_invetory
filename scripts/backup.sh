@@ -5,6 +5,7 @@
 # up SEPARATELY (password manager / sealed envelope), never next to the dumps.
 set -euo pipefail
 . "$(dirname "$0")/_env.sh"
+BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
 mkdir -p "$BACKUP_DIR"
 OUT="$BACKUP_DIR/${DB_NAME}-$(date +%Y%m%d-%H%M%S).dump"
 pg "$DB_USER" "$DB_PASSWORD" pg_dump -d "$DB_NAME" --format=custom --no-owner --no-privileges > "$OUT"

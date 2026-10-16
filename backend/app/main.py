@@ -1,4 +1,5 @@
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -32,12 +33,12 @@ def bootstrap() -> None:
         if not settings.bootstrap_admin_enabled or db.scalar(select(User.id).limit(1)) is not None:
             db.commit()
             return
-        username, password = settings.bootstrap_admin_username, settings.bootstrap_admin_password
-        if not username or not password or username.startswith("REPLACE_") or password.startswith("REPLACE_"):
-            log.warning("BOOTSTRAP_ADMIN_ENABLED but username/password not configured; no admin created")
-            db.commit()
-            return
-        if password_policy_errors(password):
+        username = settings.bootstrap_admin_username or "admin"
+        password = settings.bootstrap_admin_password
+        generated = not password or password.startswith("REPLACE_")
+        if generated:
+            password = secrets.token_urlsafe(12) + "Aa1!"
+        elif password_policy_errors(password):
             log.error("BOOTSTRAP_ADMIN_PASSWORD does not meet the password policy; no admin created")
             db.commit()
             return
@@ -45,8 +46,13 @@ def bootstrap() -> None:
         db.add(User(username=username, email=settings.bootstrap_admin_email, full_name="Administrator",
                     password_hash=hash_password(password), roles=[role], must_change_password=True))
         db.commit()
-        log.warning("Bootstrap Super Admin '%s' created — set BOOTSTRAP_ADMIN_ENABLED=false and remove the "
-                    "password from .env now", username)
+        if generated:
+            log.warning("=" * 64)
+            log.warning("FIRST ADMIN CREATED  —  username: %s   password: %s", username, password)
+            log.warning("You must change this password at first login.")
+            log.warning("=" * 64)
+        else:
+            log.warning("First admin '%s' created with BOOTSTRAP_ADMIN_PASSWORD (must change at first login)", username)
 
 
 @asynccontextmanager

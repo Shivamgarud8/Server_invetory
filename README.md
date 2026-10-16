@@ -61,11 +61,13 @@ Quick version:
 
 ```bash
 cp .env.example .env && chmod 600 .env
-./scripts/generate-secrets.sh            # paste into .env
-nano .env                                # SERVER_LABEL, PUBLIC_URL, DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_ADMIN_PASSWORD…
+./scripts/generate-secrets.sh            # prints a DB_PASSWORD to paste into .env
+nano .env                                # SERVER_LABEL, PUBLIC_URL, DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_ADMIN_PASSWORD
 ./scripts/setup-db.sh                    # creates the DB + least-privilege user using the postgres superuser
 ./scripts/gen-self-signed-cert.sh infra.tagid.internal   # or copy your own tls.crt/tls.key into nginx/certs/
 docker compose up -d --build             # migrations run automatically
+docker compose logs tagid-portal-backend | grep "FIRST ADMIN"   # first login: admin + generated password
+./scripts/show-secrets.sh                # back up the auto-generated security keys
 ```
 
 Everything that differs between servers lives in `.env`: this server's label, URL and bind IP, plus the DB host, port, name, user, password and superuser password. Moving from one server to another is a matter of copying `.env`, editing a few lines, and restoring a backup (`scripts/backup.sh` / `scripts/restore.sh`).
@@ -75,7 +77,7 @@ Everything that differs between servers lives in `.env`: this server's label, UR
 | | `hashicorp` (recommended) | `local` |
 |---|---|---|
 | Where passwords live | Vault KV v2 at `secret/tagid-infra-manager/credentials/<id>` (versioned by Vault) | AES-256-GCM ciphertext in PostgreSQL, bound to the credential ID |
-| Key | Vault token in `.env` (scope it with a policy limited to that path) | `CREDENTIAL_ENCRYPTION_KEY` in `.env` |
+| Key | Vault token in `.env` (scope it with a policy limited to that path) | `CREDENTIAL_ENCRYPTION_KEY`, auto-generated into the `portal-secrets` volume (or set in `.env`) |
 | What PostgreSQL holds | Nothing secret | Ciphertext only, useless without the key |
 
 Minimal Vault policy:
@@ -85,7 +87,7 @@ path "secret/data/tagid-infra-manager/*"     { capabilities = ["create", "update
 path "secret/metadata/tagid-infra-manager/*" { capabilities = ["delete"] }
 ```
 
-**With `local`: if you lose `CREDENTIAL_ENCRYPTION_KEY`, you lose every stored password.** Back the key up separately from the database dumps (sealed envelope or offline password manager), and never store the two together.
+**With `local`: if you lose `CREDENTIAL_ENCRYPTION_KEY`, you lose every stored password.** Back it up with `./scripts/show-secrets.sh`, separately from the database dumps (sealed envelope or offline password manager), and never store the two together.
 
 ## Security controls
 
@@ -94,7 +96,7 @@ path "secret/metadata/tagid-infra-manager/*" { capabilities = ["delete"] }
 - Optional TOTP 2FA, with the secret encrypted at rest.
 - Server-side sessions stored hashed in the DB, sent as an `HttpOnly; Secure; SameSite=Strict` cookie. 30 min idle timeout (enforced on both server and client) and a 12 h absolute limit. Sessions can be revoked.
 - CSRF protection via a required custom header. Strict CSP, HSTS, `X-Frame-Options: DENY`, `no-store` on API responses.
-- `TRUSTED_NETWORKS` CIDR allow-list. API docs are disabled in production.
+- Optional `TRUSTED_NETWORKS` CIDR allow-list. API docs are disabled in production.
 - Passwords never appear in logs, audit entries, exports, list responses, or browser storage.
 - Containers are read-only, run as non-root, with `cap_drop: ALL` and `no-new-privileges`. The DB network is `internal`.
 
@@ -112,7 +114,7 @@ Environment names are mapped automatically: `Production`/`PRD` become PROD, `Sta
 ## Operations
 
 ```bash
-./scripts/backup.sh                                       # pg_dump (custom format) to $BACKUP_DIR, 30-day retention
+./scripts/backup.sh                                       # pg_dump (custom format) to ./backups, 30-day retention
 docker compose pull && docker compose up -d --build      # upgrade (migrations run automatically)
 docker compose exec tagid-portal-backend alembic current # migration state
 ```
