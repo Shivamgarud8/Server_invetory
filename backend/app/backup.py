@@ -33,7 +33,7 @@ from .security import get_vault
 
 FORMAT = "tagid-inventory"
 FORMAT_VERSION = 1
-APP_VERSION = "1.6.0"
+APP_VERSION = "2.1.0"
 SNAPSHOT_KEEP = 30
 
 

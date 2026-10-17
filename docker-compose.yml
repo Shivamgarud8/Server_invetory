@@ -11,7 +11,7 @@ x-logging: &logging
 services:
   tagid-portal-frontend:
     build: ./frontend
-    image: tagid-infra-manager-ui:${APP_VERSION:-1.6.0}
+    image: tagid-infra-manager-ui:${APP_VERSION:-2.1.0}
     container_name: tagid-portal-frontend
     restart: unless-stopped
     depends_on: [tagid-portal-backend]
@@ -26,7 +26,7 @@ services:
 
   tagid-portal-backend:
     build: ./backend
-    image: tagid-infra-manager-api:${APP_VERSION:-1.6.0}
+    image: tagid-infra-manager-api:${APP_VERSION:-2.1.0}
     container_name: tagid-portal-backend
     restart: unless-stopped
     depends_on:
@@ -54,7 +54,7 @@ services:
   # Background worker: scheduled email reports, status checks, daily configuration snapshots
   tagid-portal-scheduler:
     build: ./backend
-    image: tagid-infra-manager-api:${APP_VERSION:-1.6.0}
+    image: tagid-infra-manager-api:${APP_VERSION:-2.1.0}
     container_name: tagid-portal-scheduler
     restart: unless-stopped
     depends_on: [tagid-portal-backend]   # the backend runs migrations and generates the keys first

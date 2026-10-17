@@ -360,7 +360,7 @@ docker compose up -d --build        # migrations run automatically; the new sche
 docker compose ps                   # backend, frontend, scheduler (+ server-db)
 ```
 
-Your data, users and `.env` are kept. **v1.6.0** adds the clients, domains, architecture, password-history, report and backup tables (migration `0002`). Existing built-in roles automatically receive the new permissions; custom roles keep what you gave them.
+Your data, users and `.env` are kept. **v2.1.0** adds the clients, domains, architecture, password-history, report and backup tables (migration `0002`). Existing built-in roles automatically receive the new permissions; custom roles keep what you gave them.
 
 ## 10. Troubleshooting
 
