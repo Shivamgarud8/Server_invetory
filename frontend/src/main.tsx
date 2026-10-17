@@ -6,6 +6,11 @@ import { UiProvider } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider } from "./lib/theme";
 import { AuditLogs } from "./pages/AuditLogs";
+import { Backup } from "./pages/Backup";
+import { ClientWorkspace, Clients } from "./pages/Clients";
+import { Domains } from "./pages/Domains";
+import { Monitoring } from "./pages/Monitoring";
+import { Reports } from "./pages/Reports";
 import { Credentials } from "./pages/Credentials";
 import { Dashboard } from "./pages/Dashboard";
 import { GeneratorPage } from "./pages/GeneratorPage";
@@ -43,6 +48,12 @@ function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={can("dashboard.view") ? <Dashboard /> : <Profile />} />
+        <Route path="clients" element={<Guard perm="clients.view"><Clients /></Guard>} />
+        <Route path="clients/:id" element={<Guard perm="clients.view"><ClientWorkspace /></Guard>} />
+        <Route path="domains" element={<Guard perm="clients.view"><Domains /></Guard>} />
+        <Route path="monitoring" element={<Guard perm="servers.view"><Monitoring /></Guard>} />
+        <Route path="backup" element={<Guard perm="backup.export"><Backup /></Guard>} />
+        <Route path="reports" element={<Guard perm="reports.manage"><Reports /></Guard>} />
         <Route path="credentials" element={<Guard perm="credentials.view"><Credentials /></Guard>} />
         <Route path="servers" element={<Guard perm="servers.view"><Servers /></Guard>} />
         <Route path="servers/:id" element={<Guard perm="servers.view"><ServerDetail /></Guard>} />

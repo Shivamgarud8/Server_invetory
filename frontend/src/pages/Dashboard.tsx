@@ -14,6 +14,11 @@ interface Dash {
   recent_password_changes?: { id: number; name: string; environment: string; color: string; changed_at: string }[];
   recent_versions?: { application: string; component: string; server: string | null; environment: string; old: string | null; new: string; by: string; at: string }[];
   recent_activity?: { id: number; at: string; user: string; action: string; label: string | null; ip: string | null }[];
+  health?: Record<string, number>;
+  rotations?: { id: number; name: string; client: string | null; due: string; days_left: number }[];
+  last_backup_at?: string | null;
+  next_report_at?: string | null;
+  report_schedule?: string;
 }
 
 function Stat({ label, value, sub, tone, to }: { label: string; value?: number; sub?: string; tone?: "warn" | "danger"; to?: string }) {
@@ -50,18 +55,50 @@ export function Dashboard() {
       <PageHead title={`Welcome back, ${me?.full_name?.split(" ")[0] || me?.username}`} sub="TagID infrastructure at a glance" />
 
       <div className="grid grid-4" style={{ marginBottom: 16 }}>
-        <Stat label="Servers" value={c.servers} to="/servers" />
+        <Stat label="Clients" value={c.clients} to="/clients" />
+        <Stat label="Servers" value={c.servers} to="/servers"
+          sub={d.health ? `${d.health.healthy || 0} healthy · ${(d.health.critical || 0) + (d.health.offline || 0)} offline · ${d.health.unknown || 0} unknown` : undefined} />
         <Stat label="Credentials" value={c.credentials} to="/credentials" />
         <Stat label="Applications" value={c.applications} sub={c.versions !== undefined ? `${c.deployments} deployments · ${c.versions} versions` : undefined} to="/versions" />
         <Stat label="Active users" value={c.users} sub={c.users_without_mfa ? `${c.users_without_mfa} without 2FA` : undefined} to="/users" />
         <Stat label="Expiring ≤ 30 days" value={c.credentials_expiring} tone="warn" to="/credentials?expiring=1" />
         <Stat label="Expired credentials" value={c.credentials_expired} tone="danger" to="/credentials?expiring=1" />
         <Stat label="Passwords > 90 days old" value={c.credentials_stale} tone="warn" sub="Consider rotating" />
+        <Stat label="Rotations overdue" value={c.rotations_overdue} tone="danger" to="/credentials?rotation=due" />
+        <Stat label="Rotations due ≤ 30 days" value={c.rotations_upcoming} tone="warn" to="/credentials?rotation=due" />
+        <Stat label="Changes to verify" value={c.pending_verification} tone="warn" sub="Changed in portal, confirm on server" to="/credentials?rotation=pending" />
         <Stat label="Failed logins (24h)" value={c.failed_logins_24h} tone="danger" to="/audit?action=LOGIN_FAILED" />
         <Stat label="Password views (24h)" value={c.password_views_24h} to="/audit?action=PASSWORD_VIEWED" />
       </div>
 
+      <div className="grid grid-2" style={{ marginBottom: 16 }}>
+        <div className="card card-pad row wrap" style={{ gap: 10 }}>
+          <span style={{ fontSize: 22 }}>🛟</span>
+          <div><div className="small muted">Last configuration backup</div><b>{d.last_backup_at ? `${timeAgo(d.last_backup_at)}` : "none yet"}</b></div>
+          <span className="spacer" /><Link to="/backup" className="btn sm">Backup & recovery</Link>
+        </div>
+        <div className="card card-pad row wrap" style={{ gap: 10 }}>
+          <span style={{ fontSize: 22 }}>✉</span>
+          <div><div className="small muted">Next email report</div><b>{d.next_report_at ? new Date(d.next_report_at).toLocaleString() : "not scheduled"}</b>
+            {d.report_schedule && <div className="small muted">{d.report_schedule}</div>}</div>
+          <span className="spacer" /><Link to="/reports" className="btn sm">Email & reports</Link>
+        </div>
+      </div>
+
       <div className="grid grid-2">
+        {d.rotations && d.rotations.length > 0 && (
+          <div className="card">
+            <div className="card-head"><h2>Credential rotations</h2><span className="spacer" /><Link to="/credentials?rotation=due" className="small">View all</Link></div>
+            <ul className="feed">
+              {d.rotations.map((r) => (
+                <li key={r.id}>
+                  <span style={{ flex: 1 }}>{r.name}{r.client && <span className="muted"> · {r.client}</span>}</span>
+                  <span className={`badge ${r.days_left < 0 ? "danger" : "warn"}`}>{r.days_left < 0 ? `overdue ${-r.days_left}d` : `in ${r.days_left}d`}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {d.servers_by_env && (
           <div className="card">
             <div className="card-head"><h2>Servers by environment</h2></div>

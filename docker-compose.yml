@@ -11,7 +11,7 @@ x-logging: &logging
 services:
   tagid-portal-frontend:
     build: ./frontend
-    image: tagid-infra-manager-ui:${APP_VERSION:-1.5.0}
+    image: tagid-infra-manager-ui:${APP_VERSION:-1.6.0}
     container_name: tagid-portal-frontend
     restart: unless-stopped
     depends_on: [tagid-portal-backend]
@@ -26,7 +26,7 @@ services:
 
   tagid-portal-backend:
     build: ./backend
-    image: tagid-infra-manager-api:${APP_VERSION:-1.5.0}
+    image: tagid-infra-manager-api:${APP_VERSION:-1.6.0}
     container_name: tagid-portal-backend
     restart: unless-stopped
     depends_on:
@@ -49,6 +49,30 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach PostgreSQL / Vault running on the Docker host
     networks: [edge, db]
+    logging: *logging
+
+  # Background worker: scheduled email reports, status checks, daily configuration snapshots
+  tagid-portal-scheduler:
+    build: ./backend
+    image: tagid-infra-manager-api:${APP_VERSION:-1.6.0}
+    container_name: tagid-portal-scheduler
+    restart: unless-stopped
+    depends_on: [tagid-portal-backend]   # the backend runs migrations and generates the keys first
+    entrypoint: ["python", "-m", "app.scheduler"]
+    env_file: .env
+    environment:
+      TZ: ${TZ:-Asia/Kolkata}
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    volumes:
+      - portal-secrets:/app/secrets:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [edge, db]
+    healthcheck:
+      disable: true
     logging: *logging
 
   # Dedicated database for this portal (enabled by COMPOSE_PROFILES=server-db in .env).

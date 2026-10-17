@@ -6,20 +6,22 @@ from sqlalchemy.orm import Session
 from ..audit import audit, diff
 from ..db import get_db
 from ..deps import Principal, require
-from ..models import ApplicationVersion, Credential, Server, ServerNetwork, ServerSpec, server_tags
+from ..models import ApplicationVersion, Client, Credential, Server, ServerNetwork, ServerSpec, server_tags
 from ..schemas import ServerIn, ServerOut
 from .common import csv_response, get_env, get_tags, like, scope
 
 router = APIRouter(prefix="/api/servers", tags=["servers"])
 
 _FIELDS = [
-    "name", "hostname", "environment_id", "server_type", "provider", "location", "os_name", "os_version",
-    "kernel_version", "architecture", "docker_version", "compose_version", "status", "owner", "purpose", "notes",
+    "name", "hostname", "environment_id", "client_id", "server_type", "role", "provider", "location", "os_name",
+    "os_version", "kernel_version", "architecture", "docker_version", "compose_version", "status", "owner",
+    "purpose", "notes", "ssh_user", "ssh_port", "ssh_auth_method", "ssh_key_ref", "mount_points", "exposed_ports",
+    "firewall_notes", "backup_policy", "recovery_instructions",
 ]
 
 
 def _query(p: Principal, q: str | None, environment_id: int | None, status_: str | None,
-           server_type: str | None, tag_id: int | None):
+           server_type: str | None, tag_id: int | None, client_id: int | None = None):
     stmt = scope(select(Server), Server.environment_id, p.env_ids())
     if q:
         t = like(q.strip())
@@ -32,6 +34,8 @@ def _query(p: Principal, q: str | None, environment_id: int | None, status_: str
         )
     if environment_id:
         stmt = stmt.where(Server.environment_id == environment_id)
+    if client_id:
+        stmt = stmt.where(Server.client_id == client_id)
     if status_:
         stmt = stmt.where(Server.status == status_)
     if server_type:
@@ -64,6 +68,7 @@ def _out(s: Server, creds: dict, deps: dict) -> ServerOut:
 def _snapshot(s: Server) -> dict:
     d = {f: getattr(s, f) for f in _FIELDS}
     d["environment_id"] = s.environment.name if s.environment else s.environment_id
+    d["client_id"] = s.client.name if s.client else None
     if s.spec:
         for k in ("cpu_cores", "ram_gb", "disk_gb", "disk_usage_pct"):
             v = getattr(s.spec, k)
@@ -75,6 +80,8 @@ def _snapshot(s: Server) -> dict:
 
 def _apply(db: Session, s: Server, body: ServerIn) -> None:
     get_env(db, body.environment_id)
+    if body.client_id is not None and not db.get(Client, body.client_id):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown client")
     for f in _FIELDS:
         setattr(s, f, getattr(body, f))
     s.name = body.name.strip()
@@ -96,10 +103,10 @@ def get_server_scoped(db: Session, p: Principal, server_id: int) -> Server:
 @router.get("", response_model=list[ServerOut])
 def list_servers(
     q: str | None = None, environment_id: int | None = None, status_: str | None = Query(None, alias="status"),
-    server_type: str | None = None, tag_id: int | None = None,
+    server_type: str | None = None, tag_id: int | None = None, client_id: int | None = None,
     db: Session = Depends(get_db), p: Principal = Depends(require("servers.view")),
 ):
-    servers = list(db.scalars(_query(p, q, environment_id, status_, server_type, tag_id)).unique())
+    servers = list(db.scalars(_query(p, q, environment_id, status_, server_type, tag_id, client_id)).unique())
     creds, deps = _counts(db, [s.id for s in servers])
     return [_out(s, creds, deps) for s in servers]
 
@@ -117,11 +124,13 @@ def export_servers(
     def ips(s, t):
         return ", ".join(str(n.ip_address) for n in s.networks if n.ip_type == t)
 
-    header = ["Server Name", "Hostname", "Environment", "Server Type", "Private IP", "Public IP", "Network IP",
+    header = ["Server Name", "Hostname", "Client", "Environment", "Role", "Server Type", "Private IP", "Public IP",
+              "VPN IP", "Network IP",
               "Provider", "Location", "OS", "OS Version", "Kernel", "Architecture", "CPU Cores", "RAM (GB)",
               "Disk (GB)", "Disk Usage %", "Docker", "Compose", "Status", "Owner", "Purpose", "Tags", "Notes"]
     rows = [[
-        s.name, s.hostname, s.environment.name, s.server_type, ips(s, "private"), ips(s, "public"), ips(s, "network"),
+        s.name, s.hostname, s.client.name if s.client else None, s.environment.name, s.role, s.server_type,
+        ips(s, "private"), ips(s, "public"), ips(s, "vpn"), ips(s, "network"),
         s.provider, s.location, s.os_name, s.os_version, s.kernel_version, s.architecture,
         s.spec.cpu_cores if s.spec else None, s.spec.ram_gb if s.spec else None, s.spec.disk_gb if s.spec else None,
         s.spec.disk_usage_pct if s.spec else None, s.docker_version, s.compose_version, s.status, s.owner,

@@ -239,3 +239,18 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .app-footer { margin-top: auto; padding: 16px 28px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12.5px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .app-footer a { font-weight: 600; }
 .login-wrap .app-footer { border-top: 0; margin-top: 0; }
+
+/* clients */
+.client-card { text-align: left; cursor: pointer; font: inherit; color: inherit; transition: transform 0.12s, box-shadow 0.12s; }
+.client-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12); }
+
+/* password history timeline */
+.timeline { border-left: 2px solid var(--border); margin-left: 6px; padding-left: 14px; display: grid; gap: 10px; }
+.timeline-item { position: relative; font-size: 13px; }
+.timeline-item::before { content: ""; position: absolute; left: -21px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
+.timeline-item.current::before { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.key-btn { font-size: 15px; }
+
+/* architecture canvas */
+.arch-flow .react-flow__node { font-family: inherit; }
+.arch-flow .react-flow__controls button { background: var(--panel); color: var(--text); border-color: var(--border); }

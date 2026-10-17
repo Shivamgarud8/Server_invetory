@@ -17,7 +17,10 @@ export interface Me {
   vault_provider: string;
 }
 
-export interface Network { id?: number; ip_type: "private" | "public" | "network" | "management"; ip_address: string; label: string | null }
+export type IpType = "private" | "public" | "vpn" | "network" | "management";
+export interface Network { id?: number; ip_type: IpType; ip_address: string; label: string | null }
+export type Health = "healthy" | "warning" | "critical" | "offline" | "unknown";
+export interface ClientBrief { id: number; name: string; color: string }
 export interface Spec { cpu_cores: number | null; ram_gb: number | null; disk_gb: number | null; disk_usage_pct: number | null }
 
 export interface Server {
@@ -25,7 +28,21 @@ export interface Server {
   name: string;
   hostname: string | null;
   environment: Environment;
+  client: ClientBrief | null;
   server_type: string;
+  role: string;
+  ssh_user: string | null;
+  ssh_port: number | null;
+  ssh_auth_method: string | null;
+  ssh_key_ref: string | null;
+  mount_points: string | null;
+  exposed_ports: string | null;
+  firewall_notes: string | null;
+  backup_policy: string | null;
+  recovery_instructions: string | null;
+  health_status: Health;
+  health_detail: string | null;
+  health_checked_at: string | null;
   provider: string | null;
   location: string | null;
   os_name: string | null;
@@ -53,6 +70,14 @@ export interface Credential {
   credential_type: CredentialType;
   category: string | null;
   server: { id: number; name: string } | null;
+  client: ClientBrief | null;
+  linked_service: { id: number; label: string } | null;
+  rotation_policy: "static" | "periodic";
+  rotation_interval_days: number | null;
+  next_rotation_at: string | null;
+  pending_verification: boolean;
+  last_change_reason: string | null;
+  history_count: number;
   environment: Environment;
   host: string | null;
   port: number | null;
@@ -86,6 +111,10 @@ export interface Deployment {
   deployed_at: string;
   updated_by_name: string | null;
   notes: string | null;
+  service_type: string;
+  port: number | null;
+  protocol: string | null;
+  health_url: string | null;
 }
 
 export interface History {
@@ -129,3 +158,46 @@ export interface User {
 export interface SessionInfo { id: number; user_id: number; username: string; created_at: string; last_seen_at: string; expires_at: string; ip_address: string | null; user_agent: string | null; current: boolean }
 
 export interface AuditEntry { id: number; created_at: string; username: string | null; action: string; entity_type: string | null; entity_id: number | null; entity_label: string | null; ip_address: string | null; user_agent: string | null; details: Record<string, unknown> | null }
+
+export interface Client {
+  id: number;
+  name: string;
+  code: string | null;
+  description: string | null;
+  architecture_type: "single" | "three_tier" | "shared_db" | "custom";
+  color: string;
+  contact: string | null;
+  notes: string | null;
+  runbook: string | null;
+  backup_policy: string | null;
+  recovery_plan: string | null;
+  created_at: string;
+  updated_at: string;
+  server_count: number;
+  service_count: number;
+  domain_count: number;
+  credential_count: number;
+  environments: string[];
+  health: Record<string, number>;
+}
+
+export interface Domain {
+  id: number;
+  name: string;
+  client: ClientBrief | null;
+  environment: Environment | null;
+  server: { id: number; name: string } | null;
+  record_type: string;
+  target: string | null;
+  dns_provider: string | null;
+  ssl_provider: string | null;
+  ssl_expires_at: string | null;
+  purpose: string | null;
+  notes: string | null;
+  health_status: Health;
+  health_detail: string | null;
+  health_checked_at: string | null;
+}
+
+export interface Dependency { id: number; from_service_id: number; to_service_id: number; protocol: string | null; port: number | null; label: string | null }
+export interface PasswordHistoryEntry { id: number; valid_from: string | null; replaced_at: string; replaced_by: string | null; reason: string | null }

@@ -18,6 +18,7 @@ This guide covers a fresh install, connecting to your PostgreSQL server, day-to-
 |---|---|---|---|
 | `tagid-portal-frontend` | `frontend/Dockerfile` (Node build → small static web server) | `FRONTEND_PORT` (3006) | Web UI. Forwards `/api` to the backend, so the browser only ever talks to one address |
 | `tagid-portal-backend` | `backend/Dockerfile` (Python 3.12 slim, non-root) | `BACKEND_PORT` (8090) | API. Checks the DB connection and runs migrations automatically on start |
+| `tagid-portal-scheduler` | same image as the backend | — | Background worker: scheduled email reports, status checks and daily configuration snapshots. Runs even when nobody is logged in |
 | `server-db` | `postgres:18-alpine` (enabled by `COMPOSE_PROFILES=server-db`, the default) | `DB_PORT` (5269) | The portal's **own** database. Your other PostgreSQL servers are never touched. Optional: point the portal at an existing PostgreSQL instead (section 5) |
 
 There is no separate nginx or reverse proxy. You open the portal directly at **`http://<server-ip>:3006`**.
@@ -294,6 +295,23 @@ Copy the backup directory off the server, e.g. with rsync or your `dbackup` tool
 
 ---
 
+## 8a. Email reports (e.g. every 15 days)
+
+1. Go to **Email & Reports**. Pick a preset (Gmail, Microsoft 365, Zoho or SES), or enter the SMTP host, port and encryption.
+2. **Gmail:** turn on 2-Step Verification, then create an app password at Google Account → Security → *App passwords*. Use your Gmail address as the username and the 16-character app password.
+3. Fill in the sender, the recipients and the schedule, e.g. *Every N days* = 15, time `10:00`, zone `Asia/Kolkata`, first send date.
+4. Click **Send test email**, then **Send report now** to check what arrives.
+5. Tick **Send reports automatically**. The `tagid-portal-scheduler` container then sends them, and the dashboard shows the next date.
+
+The app password is stored encrypted and never appears in emails or exports. If you attach the encrypted recovery bundle, its passphrase is never put in the email; keep it in a password manager.
+
+## 8b. Disaster recovery for the inventory
+
+- **Backup & Recovery → Download inventory**: everything except passwords. Safe to store in the usual places.
+- **Create recovery bundle**: includes the current passwords, encrypted with a passphrase you choose. Store the file and the passphrase **separately**.
+- **Restore** on a fresh portal (for example after the server is lost): upload the file (plus the passphrase for a bundle) → review the preview → confirm with your password. A pre-import snapshot is taken first. Restoring only writes inventory records; it never runs commands or changes passwords on real servers.
+- The scheduler also stores a daily snapshot (the last 30 are kept, visible on the same page).
+
 ## 9. Move to another server (e.g. 106 → new server)
 
 Everything lives in PostgreSQL, plus `.env`. Copy the old `.env`, keep its keys, and change only the server and DB lines.
@@ -333,6 +351,17 @@ This procedure was tested end to end. Every stored password decrypted correctly 
 
 ---
 
+## 9b. Upgrading
+
+```bash
+cd ~/DevOps/Server_invetory
+git checkout main && git pull
+docker compose up -d --build        # migrations run automatically; the new scheduler container starts too
+docker compose ps                   # backend, frontend, scheduler (+ server-db)
+```
+
+Your data, users and `.env` are kept. **v1.6.0** adds the clients, domains, architecture, password-history, report and backup tables (migration `0002`). Existing built-in roles automatically receive the new permissions; custom roles keep what you gave them.
+
 ## 10. Troubleshooting
 
 | Symptom | Cause / fix |
@@ -349,6 +378,8 @@ This procedure was tested end to end. Every stored password decrypted correctly 
 | `STARTUP ERROR: cannot reach PostgreSQL at …` | Wrong `DB_HOST`/`DB_PORT`, PostgreSQL not listening on that IP, or a firewall in between. Test from the server: `nc -zv <DB_HOST> <DB_PORT>` |
 | Login seems to work but you're sent back to the login page | `COOKIE_SECURE=true` while using `http://`. Leave `COOKIE_SECURE` empty |
 | Browser can't open `http://<ip>:3006` | Check `docker compose ps`, that `FRONTEND_PORT` is open in the firewall, and that `BIND_IP` isn't `127.0.0.1` |
+| Scheduler log shows `relation … does not exist` once at start | Normal on the very first start: it retries every 30 s, after the backend has run the migrations |
+| No email arrives | Check **Email & Reports → Delivery history** for the SMTP error. For Gmail you need an *app password*, not your normal password |
 | `port is already allocated` | Another service uses that port. Change `FRONTEND_PORT` / `BACKEND_PORT` (and `PUBLIC_URL`) |
 
 ---

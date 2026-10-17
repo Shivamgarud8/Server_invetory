@@ -8,9 +8,16 @@ from .models import CredentialType, Environment, Permission, Role, Tag
 # module -> [(action, description)]
 CATALOG: dict[str, list[tuple[str, str]]] = {
     "dashboard": [("view", "View dashboard")],
+    "clients": [
+        ("view", "View clients, domains and architecture"),
+        ("create", "Add clients and domains"),
+        ("update", "Edit clients, domains and architecture diagrams"),
+        ("delete", "Delete clients and domains"),
+    ],
     "credentials": [
         ("view", "View credential records (password hidden)"),
         ("view_password", "Reveal / copy passwords"),
+        ("view_history", "Reveal previous password versions (re-authentication required)"),
         ("create", "Add credentials"),
         ("update", "Edit credentials and change passwords"),
         ("delete", "Delete credentials"),
@@ -38,6 +45,12 @@ CATALOG: dict[str, list[tuple[str, str]]] = {
     "audit": [("view", "View audit logs")],
     "settings": [("manage", "Manage environments, tags and credential types")],
     "import": [("run", "Import data from Excel / CSV")],
+    "backup": [
+        ("export", "Download inventory backups (no secrets)"),
+        ("export_secrets", "Create encrypted recovery bundles that include secrets"),
+        ("restore", "Import / restore inventory and recovery bundles"),
+    ],
+    "reports": [("manage", "Configure email reports, SMTP and status checks")],
 }
 
 ALL_CODES = [f"{m}.{a}" for m, actions in CATALOG.items() for a, _ in actions]
@@ -54,21 +67,24 @@ BUILTIN_ROLES: dict[str, tuple[str, list[str]]] = {
         "Manage servers, applications and versions; use credentials",
         [
             "dashboard.view",
+            "clients.view", "clients.create", "clients.update",
             "servers.view", "servers.create", "servers.update", "servers.delete",
             "versions.view", "versions.create", "versions.update", "versions.delete",
             "credentials.view", "credentials.view_password", "credentials.create", "credentials.update",
-            "import.run",
+            "import.run", "backup.export",
         ],
     ),
     "Developer": (
         "View servers and versions; credential list without passwords",
-        ["dashboard.view", "servers.view", "versions.view", "credentials.view"],
+        ["dashboard.view", "clients.view", "servers.view", "versions.view", "credentials.view"],
     ),
     "Auditor": (
         "Read-only access plus audit logs",
-        ["dashboard.view", "servers.view", "versions.view", "credentials.view", "users.view", "audit.view"],
+        ["dashboard.view", "clients.view", "servers.view", "versions.view", "credentials.view", "users.view",
+         "audit.view", "backup.export"],
     ),
-    "Viewer": ("Read-only access to inventory and versions", ["dashboard.view", "servers.view", "versions.view"]),
+    "Viewer": ("Read-only access to inventory and versions",
+               ["dashboard.view", "clients.view", "servers.view", "versions.view"]),
 }
 
 DEFAULT_ENVIRONMENTS = [
@@ -94,12 +110,15 @@ DEFAULT_TAGS = [
 
 def seed(db: Session) -> None:
     perms = {p.code: p for p in db.scalars(select(Permission))}
+    first_run = not perms
+    new_codes: set[str] = set()
     for module, actions in CATALOG.items():
         for action, desc in actions:
             code = f"{module}.{action}"
             if code not in perms:
                 perms[code] = Permission(code=code, module=module, action=action, description=desc)
                 db.add(perms[code])
+                new_codes.add(code)
             else:
                 perms[code].description = desc
     db.flush()
@@ -110,6 +129,11 @@ def seed(db: Session) -> None:
             db.add(Role(name=name, description=desc, is_system=True, permissions=[perms[c] for c in codes]))
         elif name == SUPER_ADMIN:
             role.permissions = [perms[c] for c in ALL_CODES]  # always complete
+        elif not first_run and new_codes:
+            # Permissions introduced by an upgrade go to the built-in roles that include them by default;
+            # anything an admin changed on these roles before is kept.
+            have = {p.code for p in role.permissions}
+            role.permissions = role.permissions + [perms[c] for c in codes if c in new_codes and c not in have]
 
     if db.scalar(select(Environment).limit(1)) is None:
         for name, color, order, prod in DEFAULT_ENVIRONMENTS:

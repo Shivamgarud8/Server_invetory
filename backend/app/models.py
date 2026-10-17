@@ -166,6 +166,29 @@ class CredentialType(Base):
     default_port: Mapped[int | None] = mapped_column(Integer)
 
 
+# ---------------------------------------------------------------- clients
+
+
+class Client(Base):
+    """A customer / project workspace (e.g. Snitch) owning servers, domains, services and credentials."""
+
+    __tablename__ = "clients"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    code: Mapped[str | None] = mapped_column(String(32))
+    description: Mapped[str | None] = mapped_column(Text)
+    # single | three_tier | shared_db | custom
+    architecture_type: Mapped[str] = mapped_column(String(32), default="custom")
+    color: Mapped[str] = mapped_column(String(16), default="#6366f1")
+    contact: Mapped[str | None] = mapped_column(String(255))
+    notes: Mapped[str | None] = mapped_column(Text)
+    runbook: Mapped[str | None] = mapped_column(Text)
+    backup_policy: Mapped[str | None] = mapped_column(Text)
+    recovery_plan: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = _ts_upd()
+
+
 # ---------------------------------------------------------------- servers
 
 
@@ -175,7 +198,23 @@ class Server(Base):
     name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     hostname: Mapped[str | None] = mapped_column(String(255))
     environment_id: Mapped[int] = mapped_column(ForeignKey("environments.id"), index=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id", ondelete="SET NULL"), index=True)
     server_type: Mapped[str] = mapped_column(String(64), default="")
+    # application | database | proxy | monitoring | storage | combined | other
+    role: Mapped[str] = mapped_column(String(32), default="combined")
+    ssh_user: Mapped[str | None] = mapped_column(String(64))
+    ssh_port: Mapped[int | None] = mapped_column(Integer)
+    ssh_auth_method: Mapped[str | None] = mapped_column(String(32))  # password | key | key+password
+    ssh_key_ref: Mapped[str | None] = mapped_column(String(255))  # where the private key lives — never the key
+    mount_points: Mapped[str | None] = mapped_column(Text)
+    exposed_ports: Mapped[str | None] = mapped_column(Text)
+    firewall_notes: Mapped[str | None] = mapped_column(Text)
+    backup_policy: Mapped[str | None] = mapped_column(Text)
+    recovery_instructions: Mapped[str | None] = mapped_column(Text)
+    # Last reachability check: healthy | warning | critical | offline | unknown
+    health_status: Mapped[str] = mapped_column(String(16), default="unknown")
+    health_detail: Mapped[str | None] = mapped_column(String(255))
+    health_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     provider: Mapped[str | None] = mapped_column(String(64))
     location: Mapped[str | None] = mapped_column(String(128))
     os_name: Mapped[str | None] = mapped_column(String(64))
@@ -194,6 +233,7 @@ class Server(Base):
     updated_at: Mapped[datetime] = _ts_upd()
 
     environment: Mapped[Environment] = relationship(lazy="joined")
+    client: Mapped[Client | None] = relationship(lazy="joined")
     spec: Mapped["ServerSpec | None"] = relationship(
         lazy="joined", uselist=False, cascade="all, delete-orphan", back_populates="server"
     )
@@ -217,9 +257,34 @@ class ServerNetwork(Base):
     __tablename__ = "server_networks"
     id: Mapped[int] = mapped_column(primary_key=True)
     server_id: Mapped[int] = mapped_column(ForeignKey("servers.id", ondelete="CASCADE"), index=True)
-    ip_type: Mapped[str] = mapped_column(String(16))  # private | public | network | management
+    ip_type: Mapped[str] = mapped_column(String(16))  # private | public | vpn | network | management
     ip_address: Mapped[str] = mapped_column(INET, index=True)
     label: Mapped[str | None] = mapped_column(String(64))
+
+
+class Domain(Base):
+    __tablename__ = "domains"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id", ondelete="SET NULL"), index=True)
+    environment_id: Mapped[int | None] = mapped_column(ForeignKey("environments.id", ondelete="SET NULL"))
+    server_id: Mapped[int | None] = mapped_column(ForeignKey("servers.id", ondelete="SET NULL"), index=True)
+    record_type: Mapped[str] = mapped_column(String(8), default="A")
+    target: Mapped[str | None] = mapped_column(String(255))
+    dns_provider: Mapped[str | None] = mapped_column(String(64))
+    ssl_provider: Mapped[str | None] = mapped_column(String(64))
+    ssl_expires_at: Mapped[date | None] = mapped_column(Date)
+    purpose: Mapped[str | None] = mapped_column(String(255))
+    notes: Mapped[str | None] = mapped_column(Text)
+    health_status: Mapped[str] = mapped_column(String(16), default="unknown")
+    health_detail: Mapped[str | None] = mapped_column(String(255))
+    health_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = _ts_upd()
+
+    client: Mapped[Client | None] = relationship(lazy="joined")
+    environment: Mapped[Environment | None] = relationship(lazy="joined")
+    server: Mapped["Server | None"] = relationship(lazy="joined")
 
 
 # ---------------------------------------------------------------- credentials
@@ -232,6 +297,8 @@ class Credential(Base):
     credential_type_id: Mapped[int] = mapped_column(ForeignKey("credential_types.id"))
     category: Mapped[str | None] = mapped_column(String(64))
     server_id: Mapped[int | None] = mapped_column(ForeignKey("servers.id", ondelete="SET NULL"), index=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id", ondelete="SET NULL"), index=True)
+    service_id: Mapped[int | None] = mapped_column(ForeignKey("application_versions.id", ondelete="SET NULL"), index=True)
     environment_id: Mapped[int] = mapped_column(ForeignKey("environments.id"), index=True)
     host: Mapped[str | None] = mapped_column(String(255))
     port: Mapped[int | None] = mapped_column(Integer)
@@ -248,15 +315,39 @@ class Credential(Base):
     has_secret: Mapped[bool] = mapped_column(Boolean, default=False)
     password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[date | None] = mapped_column(Date)
+    # static = never rotates automatically; periodic = must rotate every rotation_interval_days
+    rotation_policy: Mapped[str] = mapped_column(String(16), default="static")
+    rotation_interval_days: Mapped[int | None] = mapped_column(Integer)
+    next_rotation_at: Mapped[date | None] = mapped_column(Date)
+    # Set when the password is changed in the portal, cleared once someone confirms it was changed on the target
+    pending_verification: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_change_reason: Mapped[str | None] = mapped_column(String(255))
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = _ts_upd()
 
     credential_type: Mapped[CredentialType] = relationship(lazy="joined")
+    client: Mapped[Client | None] = relationship(lazy="joined")
+    linked_service: Mapped["ApplicationVersion | None"] = relationship(lazy="joined", foreign_keys=[service_id])
     environment: Mapped[Environment] = relationship(lazy="joined")
     server: Mapped[Server | None] = relationship(lazy="joined")
     tags: Mapped[list[Tag]] = relationship(secondary=credential_tags, lazy="selectin")
+
+
+class CredentialSecretHistory(Base):
+    """Previous secret versions (max 5 per credential). Encrypted with a separate key; never exported in inventory."""
+
+    __tablename__ = "credential_secret_history"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    credential_id: Mapped[int] = mapped_column(ForeignKey("credentials.id", ondelete="CASCADE"), index=True)
+    secret_enc: Mapped[bytes | None] = mapped_column(LargeBinary)  # local provider
+    vault_version: Mapped[int | None] = mapped_column(Integer)  # hashicorp provider (KV v2 version)
+    provider: Mapped[str] = mapped_column(String(16))
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    replaced_at: Mapped[datetime] = _ts()
+    replaced_by: Mapped[str | None] = mapped_column(String(64))
+    reason: Mapped[str | None] = mapped_column(String(255))
 
 
 # ---------------------------------------------------------------- versions
@@ -285,6 +376,11 @@ class ApplicationVersion(Base):
     current_version: Mapped[str] = mapped_column(String(64))
     previous_version: Mapped[str | None] = mapped_column(String(64))
     image: Mapped[str | None] = mapped_column(String(255))
+    # ui | api | worker | database | cache | queue | storage | proxy | monitoring | other
+    service_type: Mapped[str] = mapped_column(String(16), default="other")
+    port: Mapped[int | None] = mapped_column(Integer)
+    protocol: Mapped[str | None] = mapped_column(String(16))
+    health_url: Mapped[str | None] = mapped_column(String(512))
     deployed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     notes: Mapped[str | None] = mapped_column(Text)
@@ -313,6 +409,65 @@ class VersionHistory(Base):
     changed_by: Mapped[str | None] = mapped_column(String(64))
     changed_at: Mapped[datetime] = _ts()
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class ServiceDependency(Base):
+    """Directed connection between two services (e.g. API → PostgreSQL)."""
+
+    __tablename__ = "service_dependencies"
+    __table_args__ = (UniqueConstraint("from_service_id", "to_service_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    from_service_id: Mapped[int] = mapped_column(ForeignKey("application_versions.id", ondelete="CASCADE"), index=True)
+    to_service_id: Mapped[int] = mapped_column(ForeignKey("application_versions.id", ondelete="CASCADE"), index=True)
+    protocol: Mapped[str | None] = mapped_column(String(16))
+    port: Mapped[int | None] = mapped_column(Integer)
+    label: Mapped[str | None] = mapped_column(String(64))
+
+
+class ArchitectureLayout(Base):
+    """Saved diagram per client: node positions/sizes/colours/labels, manual nodes and edges (React Flow JSON)."""
+
+    __tablename__ = "architecture_layouts"
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), primary_key=True)
+    layout: Mapped[dict] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = _ts_upd()
+    updated_by: Mapped[str | None] = mapped_column(String(64))
+
+
+# ---------------------------------------------------------------- settings, reports, backups
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSONB)
+    secret_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = _ts_upd()
+
+
+class ReportRun(Base):
+    __tablename__ = "report_runs"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = _ts()
+    kind: Mapped[str] = mapped_column(String(16))  # scheduled | manual | test
+    status: Mapped[str] = mapped_column(String(16))  # sent | failed
+    recipients: Mapped[str | None] = mapped_column(Text)
+    detail: Mapped[str | None] = mapped_column(Text)
+    triggered_by: Mapped[str | None] = mapped_column(String(64))
+
+
+class ConfigBackup(Base):
+    """Inventory snapshot (no secrets) taken by the scheduler or on demand."""
+
+    __tablename__ = "config_backups"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = _ts()
+    kind: Mapped[str] = mapped_column(String(16))  # scheduled | manual | pre-import
+    checksum: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    summary: Mapped[dict | None] = mapped_column(JSONB)
+    content: Mapped[dict] = mapped_column(JSONB)
+    created_by: Mapped[str | None] = mapped_column(String(64))
 
 
 # ---------------------------------------------------------------- audit

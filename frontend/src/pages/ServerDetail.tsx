@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHead } from "../components/Layout";
 import { SecretCell } from "../components/SecretCell";
-import { Empty, EnvBadge, StatusBadge, TagChips, fmtDate, timeAgo, useUi } from "../components/ui";
+import { ClientChip, Empty, EnvBadge, HealthBadge, StatusBadge, TagChips, fmtDate, timeAgo, useUi } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useLoad } from "../lib/hooks";
@@ -40,8 +40,13 @@ export function ServerDetail() {
   const spec = s.spec;
   return (
     <>
-      <PageHead title={s.name} sub={<span className="row wrap"><EnvBadge env={s.environment} /> <StatusBadge status={s.status} /> <span>{s.server_type}</span> <TagChips tags={s.tags} /></span>}>
-        <Link to="/servers" className="btn">← Back</Link>
+      <PageHead title={s.name} sub={<span className="row wrap"><ClientChip client={s.client} /><EnvBadge env={s.environment} /> <StatusBadge status={s.status} /> <HealthBadge status={s.health_status} detail={s.health_detail} at={s.health_checked_at} /> <span className="badge gray">{s.role}</span> <span>{s.server_type}</span> <TagChips tags={s.tags} /></span>}>
+        <Link to={s.client ? `/clients/${s.client.id}?tab=architecture` : "/servers"} className="btn">← Back</Link>
+        <button className="btn" onClick={() => {
+          const { id: _id, created_at: _c, updated_at: _u, credential_count: _cc, deployment_count: _dc, health_status: _h, health_detail: _hd, health_checked_at: _hc, ...rest } = s;
+          const blob = new Blob([JSON.stringify({ ...rest, environment: s.environment.name, client: s.client?.name ?? null, tags: s.tags.map((t) => t.name) }, null, 2)], { type: "application/json" });
+          const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${s.name}.json`; a.click();
+        }}>{"{ }"} Export JSON</button>
         {can("servers.delete") && <button className="btn danger" onClick={remove}>Delete</button>}
         {can("servers.update") && <button className="btn primary" onClick={() => setEditing(true)}>Edit</button>}
       </PageHead>
@@ -65,6 +70,9 @@ export function ServerDetail() {
             <dt>Public IP</dt><dd className="mono">{ipOf(s, "public") || "—"}</dd>
             <dt>Network IP</dt><dd className="mono">{ipOf(s, "network") || "—"}</dd>
             {ipOf(s, "management") && <><dt>Management</dt><dd className="mono">{ipOf(s, "management")}</dd></>}
+            <dt>VPN IP</dt><dd className="mono">{ipOf(s, "vpn") || "—"}</dd>
+            <dt>SSH</dt><dd className="mono">{s.ssh_user ? `${s.ssh_user}@ port ${s.ssh_port || 22}` : "—"}{s.ssh_auth_method ? ` · ${s.ssh_auth_method}` : ""}</dd>
+            <dt>Key reference</dt><dd>{s.ssh_key_ref || "—"}</dd>
             <dt>Provider</dt><dd>{s.provider || "—"}</dd>
             <dt>Location</dt><dd>{s.location || "—"}</dd>
             <dt>Owner</dt><dd>{s.owner || "—"}</dd>
@@ -80,6 +88,11 @@ export function ServerDetail() {
             <dt>Architecture</dt><dd>{s.architecture || "—"}</dd>
             <dt>Docker</dt><dd className="mono">{s.docker_version || "—"}</dd>
             <dt>Docker Compose</dt><dd className="mono">{s.compose_version || "—"}</dd>
+            <dt>Exposed ports</dt><dd className="mono small" style={{ whiteSpace: "pre-wrap" }}>{s.exposed_ports || "—"}</dd>
+            <dt>Firewall</dt><dd className="small" style={{ whiteSpace: "pre-wrap" }}>{s.firewall_notes || "—"}</dd>
+            <dt>Mounts</dt><dd className="mono small" style={{ whiteSpace: "pre-wrap" }}>{s.mount_points || "—"}</dd>
+            <dt>Backup</dt><dd className="small" style={{ whiteSpace: "pre-wrap" }}>{s.backup_policy || "—"}</dd>
+            <dt>Recovery</dt><dd className="small" style={{ whiteSpace: "pre-wrap" }}>{s.recovery_instructions || "—"}</dd>
             <dt>Added</dt><dd>{fmtDate(s.created_at, true)}</dd>
             <dt>Last updated</dt><dd>{fmtDate(s.updated_at, true)}</dd>
           </dl>

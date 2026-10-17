@@ -5,7 +5,8 @@ import { Empty, EnvBadge, Field, Modal, fmtDate, timeAgo, useUi } from "../compo
 import { api, download } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useDebounced, useLoad, useLookups } from "../lib/hooks";
-import type { Application, Deployment, History, Server } from "../lib/types";
+import type { Application, Dependency, Deployment, History, Server } from "../lib/types";
+import { SERVICE_STYLE } from "../components/Architecture";
 
 interface Matrix {
   environments: { id: number; name: string; color: string }[];
@@ -50,6 +51,7 @@ function Deployments() {
   const [adding, setAdding] = useState<Deployment | "new" | null>(null);
   const [updating, setUpdating] = useState<Deployment | null>(null);
   const [hist, setHist] = useState<Deployment | null>(null);
+  const [links, setLinks] = useState<Deployment | null>(null);
 
   const rollback = async (d: Deployment) => {
     if (!(await confirm(`Roll back ${d.component}?`, <p>Record <b className="mono">{d.current_version}</b> → <b className="mono">{d.previous_version}</b> on {d.server?.name || d.environment.name}.</p>, false))) return;
@@ -78,13 +80,14 @@ function Deployments() {
       </div>
       <div className="table-wrap">
         <table className="tbl">
-          <thead><tr><th>Server</th><th>Application</th><th>Component</th><th>Version</th><th>Previous</th><th>Env</th><th>Deployed</th><th>By</th><th /></tr></thead>
+          <thead><tr><th>Server</th><th>Application</th><th>Component</th><th>Type / port</th><th>Version</th><th>Previous</th><th>Env</th><th>Deployed</th><th>By</th><th /></tr></thead>
           <tbody>
             {data?.map((d) => (
               <tr key={d.id}>
                 <td>{d.server?.name || <span className="muted">—</span>}</td>
                 <td><b>{d.application.name}</b></td>
                 <td>{d.component}{d.image && <div className="mono small muted">{d.image}</div>}</td>
+                <td className="nowrap"><span className="badge" style={{ background: (SERVICE_STYLE[d.service_type] || SERVICE_STYLE.other).color + "22", color: (SERVICE_STYLE[d.service_type] || SERVICE_STYLE.other).color }}>{(SERVICE_STYLE[d.service_type] || SERVICE_STYLE.other).icon} {d.service_type}</span>{d.port && <span className="mono small"> :{d.port}</span>}</td>
                 <td className="mono"><b>{d.current_version}</b></td>
                 <td className="mono muted">{d.previous_version || "—"}</td>
                 <td><EnvBadge env={d.environment} /></td>
@@ -93,6 +96,7 @@ function Deployments() {
                 <td className="right nowrap">
                   {can("versions.update") && <button className="btn sm primary" onClick={() => setUpdating(d)}>Update version</button>}{" "}
                   <button className="icon-btn" title="History" onClick={() => setHist(d)}>🕘</button>
+                  <button className="icon-btn" title="Connections to other services" onClick={() => setLinks(d)}>🔗</button>
                   {can("versions.update") && d.previous_version && <button className="icon-btn" title="Roll back to previous" onClick={() => rollback(d)}>↶</button>}
                   {can("versions.update") && <button className="icon-btn" title="Edit" onClick={() => setAdding(d)}>✎</button>}
                   {can("versions.delete") && <button className="icon-btn" title="Remove" onClick={() => remove(d)}>🗑</button>}
@@ -105,6 +109,7 @@ function Deployments() {
       </div>
       {adding && <DeploymentForm initial={adding === "new" ? null : adding} apps={apps || []} onClose={() => setAdding(null)} onSaved={() => { setAdding(null); reload(); }} />}
       {updating && <UpdateVersion d={updating} onClose={() => setUpdating(null)} onSaved={() => { setUpdating(null); reload(); }} />}
+      {links && <Connections d={links} all={data || []} onClose={() => setLinks(null)} />}
       {hist && (
         <Modal title={`${hist.application.name} / ${hist.component} — history`} onClose={() => setHist(null)} wide>
           <HistoryTable deploymentId={hist.id} />
@@ -154,6 +159,7 @@ function DeploymentForm({ initial, apps, onClose, onSaved }: { initial: Deployme
   const [f, setF] = useState({
     application_id: String(initial?.application.id || ""), component: initial?.component || "", server_id: String(initial?.server?.id || ""),
     environment_id: String(initial?.environment.id || ""), current_version: initial?.current_version || "", image: initial?.image || "", notes: initial?.notes || "",
+    service_type: initial?.service_type || "other", port: initial?.port ? String(initial.port) : "", protocol: initial?.protocol || "", health_url: initial?.health_url || "",
   });
   const set = (k: keyof typeof f, v: string) => setF((p) => ({ ...p, [k]: v }));
   const pickServer = (id: string) => {
@@ -162,7 +168,7 @@ function DeploymentForm({ initial, apps, onClose, onSaved }: { initial: Deployme
   };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const body = { ...f, application_id: +f.application_id, environment_id: +f.environment_id, server_id: f.server_id ? +f.server_id : null };
+    const body = { ...f, application_id: +f.application_id, environment_id: +f.environment_id, server_id: f.server_id ? +f.server_id : null, port: f.port ? +f.port : null };
     try {
       if (initial) await api.put(`/deployments/${initial.id}`, body);
       else await api.post("/deployments", body);
@@ -185,8 +191,14 @@ function DeploymentForm({ initial, apps, onClose, onSaved }: { initial: Deployme
         <Field label="Environment" required>
           <select required value={f.environment_id} onChange={(e) => set("environment_id", e.target.value)}><option value="">Select…</option>{lk.environments.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select>
         </Field>
-        <Field label="Current version" required><input className="mono" required value={f.current_version} onChange={(e) => set("current_version", e.target.value)} placeholder="v3.33.4" /></Field>
+        <Field label="Current version (or -)" required><input className="mono" required value={f.current_version} onChange={(e) => set("current_version", e.target.value)} placeholder="v3.33.4" /></Field>
         <Field label="Image"><input className="mono" value={f.image} onChange={(e) => set("image", e.target.value)} /></Field>
+        <Field label="Service type">
+          <select value={f.service_type} onChange={(e) => set("service_type", e.target.value)}>{Object.entries(SERVICE_STYLE).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}</select>
+        </Field>
+        <Field label="Port"><input type="number" min={1} max={65535} value={f.port} onChange={(e) => set("port", e.target.value)} /></Field>
+        <Field label="Protocol"><input value={f.protocol} onChange={(e) => set("protocol", e.target.value)} placeholder="HTTP, TCP, AMQP…" /></Field>
+        <Field label="Health URL"><input value={f.health_url} onChange={(e) => set("health_url", e.target.value)} placeholder="https://api.example.com/health" /></Field>
         <Field label="Notes" full><textarea value={f.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
         {!apps.length && <div className="alert warn full">Create an application in the Applications tab first.</div>}
       </form>
@@ -325,5 +337,48 @@ function Applications() {
         </Modal>
       )}
     </div>
+  );
+}
+
+function Connections({ d, all, onClose }: { d: Deployment; all: Deployment[]; onClose: () => void }) {
+  const { can } = useAuth();
+  const { toast } = useUi();
+  const { data, reload } = useLoad(() => api.get<Dependency[]>("/service-dependencies"));
+  const [to, setTo] = useState("");
+  const [protocol, setProtocol] = useState("");
+  const [port, setPort] = useState("");
+  const byId = new Map(all.map((x) => [x.id, x]));
+  const label = (id: number) => { const x = byId.get(id); return x ? `${x.application.name} / ${x.component}${x.server ? ` @ ${x.server.name}` : ""}` : `#${id}`; };
+  const out = (data || []).filter((x) => x.from_service_id === d.id);
+  const inc = (data || []).filter((x) => x.to_service_id === d.id);
+  const add = async () => {
+    if (!to) return;
+    const target = byId.get(+to);
+    await api.post("/service-dependencies", { from_service_id: d.id, to_service_id: +to, protocol: protocol || null, port: port ? +port : target?.port ?? null })
+      .then(() => { setTo(""); setPort(""); setProtocol(""); reload(); }).catch((e) => toast(e.message, true));
+  };
+  const del = (id: number) => api.del(`/service-dependencies/${id}`).then(reload).catch((e) => toast(e.message, true));
+  return (
+    <Modal wide title={`🔗 Connections — ${d.application.name} / ${d.component}`} onClose={onClose}>
+      <h3>This service connects to</h3>
+      {out.length ? out.map((x) => (
+        <div key={x.id} className="row" style={{ marginBottom: 6 }}>→ <b>{label(x.to_service_id)}</b> <span className="mono small muted">{x.protocol} {x.port ? `:${x.port}` : ""}</span><span className="spacer" />
+          {can("versions.update") && <button className="icon-btn" onClick={() => del(x.id)}>✕</button>}</div>
+      )) : <p className="muted small">Nothing yet.</p>}
+      {can("versions.update") && (
+        <div className="row wrap" style={{ marginTop: 8 }}>
+          <select value={to} onChange={(e) => setTo(e.target.value)} style={{ maxWidth: 360 }}>
+            <option value="">Add connection to…</option>
+            {all.filter((x) => x.id !== d.id).map((x) => <option key={x.id} value={x.id}>{label(x.id)}</option>)}
+          </select>
+          <input placeholder="Protocol" value={protocol} onChange={(e) => setProtocol(e.target.value)} style={{ width: 110 }} />
+          <input placeholder="Port" type="number" value={port} onChange={(e) => setPort(e.target.value)} style={{ width: 90 }} />
+          <button className="btn primary" disabled={!to} onClick={add}>Add</button>
+        </div>
+      )}
+      <h3 style={{ marginTop: 18 }}>Used by</h3>
+      {inc.length ? inc.map((x) => <div key={x.id} className="small" style={{ marginBottom: 4 }}>← <b>{label(x.from_service_id)}</b> <span className="mono muted">{x.protocol} {x.port ? `:${x.port}` : ""}</span></div>) : <p className="muted small">No other service depends on this one.</p>}
+      <p className="small muted">Connections appear as animated arrows in the client's architecture diagram.</p>
+    </Modal>
   );
 }

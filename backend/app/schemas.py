@@ -197,11 +197,60 @@ class SessionOut(BaseModel):
     current: bool = False
 
 
+# ---------------------------------------------------------------- clients
+
+ARCH_TYPES = r"^(single|three_tier|shared_db|custom)$"
+
+
+class ClientIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    code: str | None = None
+    description: str | None = None
+    architecture_type: str = Field(default="custom", pattern=ARCH_TYPES)
+    color: str = "#6366f1"
+    contact: str | None = None
+    notes: str | None = None
+    runbook: str | None = None
+    backup_policy: str | None = None
+    recovery_plan: str | None = None
+
+    _b = field_validator("code", "description", "contact", "notes", "runbook", "backup_policy", "recovery_plan",
+                         mode="before")(_blank_to_none)
+
+
+class ClientBrief(ORM):
+    id: int
+    name: str
+    color: str
+
+
+class ClientOut(ORM):
+    id: int
+    name: str
+    code: str | None
+    description: str | None
+    architecture_type: str
+    color: str
+    contact: str | None
+    notes: str | None
+    runbook: str | None
+    backup_policy: str | None
+    recovery_plan: str | None
+    created_at: datetime
+    updated_at: datetime
+    server_count: int = 0
+    service_count: int = 0
+    domain_count: int = 0
+    credential_count: int = 0
+    environments: list[str] = []
+    health: dict[str, int] = {}
+
+
 # ---------------------------------------------------------------- servers
 
 
 class NetworkIn(BaseModel):
-    ip_type: str = Field(pattern=r"^(private|public|network|management)$")
+    ip_type: str = Field(pattern=r"^(private|public|vpn|network|management)$")
     ip_address: str
     label: str | None = None
 
@@ -232,11 +281,25 @@ class SpecIn(ORM):
     disk_usage_pct: float | None = Field(default=None, ge=0, le=100)
 
 
+SERVER_ROLES = r"^(application|database|proxy|monitoring|storage|combined|other)$"
+
+
 class ServerIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     hostname: str | None = None
     environment_id: int
+    client_id: int | None = None
     server_type: str = Field(min_length=1, max_length=64)
+    role: str = Field(default="combined", pattern=SERVER_ROLES)
+    ssh_user: str | None = None
+    ssh_port: int | None = Field(default=None, ge=1, le=65535)
+    ssh_auth_method: str | None = None
+    ssh_key_ref: str | None = None
+    mount_points: str | None = None
+    exposed_ports: str | None = None
+    firewall_notes: str | None = None
+    backup_policy: str | None = None
+    recovery_instructions: str | None = None
     provider: str | None = None
     location: str | None = None
     os_name: str | None = None
@@ -255,7 +318,9 @@ class ServerIn(BaseModel):
 
     _b = field_validator(
         "hostname", "provider", "location", "os_name", "os_version", "kernel_version", "architecture",
-        "docker_version", "compose_version", "owner", "purpose", "notes", mode="before",
+        "docker_version", "compose_version", "owner", "purpose", "notes", "ssh_user", "ssh_auth_method",
+        "ssh_key_ref", "mount_points", "exposed_ports", "firewall_notes", "backup_policy", "recovery_instructions",
+        mode="before",
     )(_blank_to_none)
 
 
@@ -269,7 +334,21 @@ class ServerOut(ORM):
     name: str
     hostname: str | None
     environment: EnvironmentOut
+    client: ClientBrief | None
     server_type: str
+    role: str
+    ssh_user: str | None
+    ssh_port: int | None
+    ssh_auth_method: str | None
+    ssh_key_ref: str | None
+    mount_points: str | None
+    exposed_ports: str | None
+    firewall_notes: str | None
+    backup_policy: str | None
+    recovery_instructions: str | None
+    health_status: str
+    health_detail: str | None
+    health_checked_at: datetime | None
     provider: str | None
     location: str | None
     os_name: str | None
@@ -299,6 +378,12 @@ class CredentialIn(BaseModel):
     credential_type_id: int
     category: str | None = None
     server_id: int | None = None
+    client_id: int | None = None
+    service_id: int | None = None
+    rotation_policy: str = Field(default="static", pattern=r"^(static|periodic)$")
+    rotation_interval_days: int | None = Field(default=None, ge=1, le=3650)
+    next_rotation_at: date | None = None
+    change_reason: str | None = Field(default=None, max_length=255)
     environment_id: int
     host: str | None = None
     port: int | None = Field(default=None, ge=1, le=65535)
@@ -319,12 +404,32 @@ class CredentialIn(BaseModel):
     )(_blank_to_none)
 
 
+class ServiceBrief(BaseModel):
+    id: int
+    label: str
+
+
 class CredentialOut(ORM):
     id: int
     name: str
     credential_type: CredentialTypeOut
     category: str | None
     server: ServerBrief | None
+    client: ClientBrief | None
+    linked_service: ServiceBrief | None = None
+    rotation_policy: str
+    rotation_interval_days: int | None
+    next_rotation_at: date | None
+    pending_verification: bool
+    last_change_reason: str | None
+    history_count: int = 0
+
+    @field_validator("linked_service", mode="before")
+    @classmethod
+    def _svc(cls, v):
+        if v is None or isinstance(v, (dict, ServiceBrief)):
+            return v
+        return {"id": v.id, "label": f"{v.application.name} / {v.component}" + (f" @ {v.server.name}" if v.server else "")}
     environment: EnvironmentOut
     host: str | None
     port: int | None
@@ -346,6 +451,23 @@ class CredentialOut(ORM):
 
 class RevealOut(BaseModel):
     password: str
+
+
+class SetSecretIn(BaseModel):
+    password: str = Field(min_length=1, max_length=4096)
+    reason: str = Field(min_length=1, max_length=255)
+
+
+class HistoryEntryOut(BaseModel):
+    id: int
+    valid_from: datetime | None
+    replaced_at: datetime
+    replaced_by: str | None
+    reason: str | None
+
+
+class ReauthIn(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
 
 
 class RevealIn(BaseModel):
@@ -373,17 +495,24 @@ class ApplicationOut(ORM):
     deployment_count: int = 0
 
 
+SERVICE_TYPES = r"^(ui|api|worker|database|cache|queue|storage|proxy|monitoring|other)$"
+
+
 class DeploymentIn(BaseModel):
     application_id: int
     component: str = Field(min_length=1, max_length=128)
     server_id: int | None = None
     environment_id: int
-    current_version: str = Field(min_length=1, max_length=64)
+    current_version: str = Field(default="-", min_length=1, max_length=64)
     image: str | None = None
+    service_type: str = Field(default="other", pattern=SERVICE_TYPES)
+    port: int | None = Field(default=None, ge=1, le=65535)
+    protocol: str | None = None
+    health_url: str | None = None
     deployed_at: datetime | None = None
     notes: str | None = None
 
-    _b = field_validator("image", "notes", mode="before")(_blank_to_none)
+    _b = field_validator("image", "notes", "protocol", "health_url", mode="before")(_blank_to_none)
 
 
 class VersionUpdateIn(BaseModel):
@@ -405,6 +534,10 @@ class DeploymentOut(ORM):
     deployed_at: datetime
     updated_by_name: str | None = None
     notes: str | None
+    service_type: str
+    port: int | None
+    protocol: str | None
+    health_url: str | None
 
 
 class HistoryOut(ORM):
@@ -419,6 +552,65 @@ class HistoryOut(ORM):
     changed_by: str | None
     changed_at: datetime
     notes: str | None
+
+
+class DependencyIn(BaseModel):
+    from_service_id: int
+    to_service_id: int
+    protocol: str | None = None
+    port: int | None = Field(default=None, ge=1, le=65535)
+    label: str | None = None
+
+
+class DependencyOut(ORM):
+    id: int
+    from_service_id: int
+    to_service_id: int
+    protocol: str | None
+    port: int | None
+    label: str | None
+
+
+# ---------------------------------------------------------------- domains
+
+
+class DomainIn(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    client_id: int | None = None
+    environment_id: int | None = None
+    server_id: int | None = None
+    record_type: str = Field(default="A", pattern=r"^(A|AAAA|CNAME|ALIAS|MX|TXT|NS|SRV|OTHER)$")
+    target: str | None = None
+    dns_provider: str | None = None
+    ssl_provider: str | None = None
+    ssl_expires_at: date | None = None
+    purpose: str | None = None
+    notes: str | None = None
+
+    _b = field_validator("target", "dns_provider", "ssl_provider", "purpose", "notes", mode="before")(_blank_to_none)
+
+    @field_validator("name")
+    @classmethod
+    def _lower(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class DomainOut(ORM):
+    id: int
+    name: str
+    client: ClientBrief | None
+    environment: EnvironmentOut | None
+    server: ServerBrief | None
+    record_type: str
+    target: str | None
+    dns_provider: str | None
+    ssl_provider: str | None
+    ssl_expires_at: date | None
+    purpose: str | None
+    notes: str | None
+    health_status: str
+    health_detail: str | None
+    health_checked_at: datetime | None
 
 
 # ---------------------------------------------------------------- audit

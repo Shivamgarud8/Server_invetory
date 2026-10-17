@@ -8,13 +8,21 @@ import { EnvBadge } from "./ui";
 interface Item { to: string; label: string; icon: string; perm?: string }
 
 const SECTIONS: { title: string; items: Item[] }[] = [
-  { title: "Overview", items: [{ to: "/", label: "Dashboard", icon: "◧", perm: "dashboard.view" }] },
+  {
+    title: "Overview",
+    items: [
+      { to: "/", label: "Dashboard", icon: "◧", perm: "dashboard.view" },
+      { to: "/clients", label: "Clients & Architecture", icon: "🏢", perm: "clients.view" },
+    ],
+  },
   {
     title: "Infrastructure",
     items: [
       { to: "/credentials", label: "Password Management", icon: "🔐", perm: "credentials.view" },
       { to: "/servers", label: "Server Inventory", icon: "🖥", perm: "servers.view" },
-      { to: "/versions", label: "Version Management", icon: "📦", perm: "versions.view" },
+      { to: "/versions", label: "Applications & Services", icon: "📦", perm: "versions.view" },
+      { to: "/domains", label: "Domains & DNS", icon: "🌐", perm: "clients.view" },
+      { to: "/monitoring", label: "Monitoring", icon: "📡", perm: "servers.view" },
       { to: "/generator", label: "Password Generator", icon: "🔑" },
     ],
   },
@@ -23,6 +31,8 @@ const SECTIONS: { title: string; items: Item[] }[] = [
     items: [
       { to: "/users", label: "User Management", icon: "👥", perm: "users.view" },
       { to: "/roles", label: "Roles & Permissions", icon: "🛡", perm: "users.view" },
+      { to: "/backup", label: "Backup & Recovery", icon: "🛟", perm: "backup.export" },
+      { to: "/reports", label: "Email & Reports", icon: "✉", perm: "reports.manage" },
       { to: "/audit", label: "Audit Logs", icon: "📋", perm: "audit.view" },
       { to: "/import", label: "Excel Import", icon: "⇪", perm: "import.run" },
       { to: "/settings", label: "Settings", icon: "⚙", perm: "settings.manage" },

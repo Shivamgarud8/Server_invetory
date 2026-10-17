@@ -100,6 +100,21 @@ export function StatusBadge({ status }: { status: string }) {
   return <span className={`badge ${cls}`}>{status}</span>;
 }
 
+const HEALTH_STYLE: Record<string, [string, string]> = {
+  healthy: ["ok", "●"], warning: ["warn", "▲"], critical: ["danger", "■"], offline: ["danger", "■"], unknown: ["gray", "?"],
+};
+
+export function HealthBadge({ status, detail, at }: { status: string; detail?: string | null; at?: string | null }) {
+  const [cls, icon] = HEALTH_STYLE[status] || HEALTH_STYLE.unknown;
+  const title = [detail, at ? `checked ${new Date(at).toLocaleString()}` : null].filter(Boolean).join(" · ");
+  return <span className={`badge ${cls}`} title={title || "Not checked yet"}>{icon} {status}</span>;
+}
+
+export function ClientChip({ client }: { client: { name: string; color: string } | null | undefined }) {
+  if (!client) return <span className="muted">—</span>;
+  return <span className="badge" style={{ background: client.color + "22", color: client.color, borderColor: client.color }}>{client.name}</span>;
+}
+
 export function TagPicker({ all, value, onChange }: { all: Tag[]; value: number[]; onChange: (ids: number[]) => void }) {
   return (
     <div className="row wrap" style={{ gap: 6 }}>

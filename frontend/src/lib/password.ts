@@ -21,6 +21,7 @@ const LOWER = "abcdefghijklmnopqrstuvwxyz";
 const DIGITS = "0123456789";
 const SYMBOLS = "!@#$%^&*()-_=+[]{};:,.?/~";
 const AMBIGUOUS = "Il1O0o";
+const MIN_RANDOM = 12;
 const LEET: Record<string, string> = { a: "4", e: "3", i: "1", o: "0", s: "5", t: "7" };
 
 /** Unbiased random integer in [0, max) via rejection sampling. */
@@ -58,15 +59,23 @@ export function generatePassword(o: GenOptions): string {
   const alphabet = active.flat();
 
   const words: string[] = [];
+  // Keywords are decoration only: at least MIN_RANDOM random characters are always added on top
+  const kwChars = o.useKeywords ? o.keywords.reduce((n, k) => n + k.trim().length, 0) : 0;
+  const length = o.useKeywords && kwChars ? Math.max(o.length, kwChars + MIN_RANDOM) : o.length;
   if (o.useKeywords && o.keywords.length) {
-    const budget = Math.max(0, o.length - active.length - 3);
+    const budget = Math.max(0, length - Math.max(MIN_RANDOM, active.length + 3));
     let used = 0;
     for (const raw of shuffle([...o.keywords])) {
+      // Keyword letters stay readable: "avoid look-alikes" does not apply to them, only the explicit exclude list
+      const explicit = new Set(o.exclude);
       const w = [...raw.trim()]
         .map((ch, i) => {
           let c = o.upper && (i === 0 || chance(0.2)) ? ch.toUpperCase() : ch.toLowerCase();
-          if (o.digits && LEET[c.toLowerCase()] && chance(0.4)) c = LEET[c.toLowerCase()];
-          return excluded.has(c) ? pick(alphabet) : c;
+          const leet = LEET[c.toLowerCase()];
+          if (o.digits && leet && !excluded.has(leet) && chance(0.4)) c = leet;
+          if (!explicit.has(c)) return c;
+          const other = c === c.toUpperCase() ? c.toLowerCase() : c.toUpperCase();
+          return explicit.has(other) ? pick(alphabet) : other;
         })
         .join("");
       if (!w || used + w.length > budget) continue;
@@ -76,7 +85,7 @@ export function generatePassword(o: GenOptions): string {
   }
 
   const required = active.map((p) => pick(p));
-  const fillLen = Math.max(0, o.length - words.join("").length - required.length);
+  const fillLen = Math.max(0, length - words.join("").length - required.length);
   const filler = shuffle([...Array.from({ length: fillLen }, () => pick(alphabet)), ...required]);
   if (!words.length) return filler.join("");
 
@@ -128,3 +137,10 @@ export const DEFAULT_GEN: GenOptions = {
   keywords: [],
   useKeywords: false,
 };
+
+/** Several keyword-based suggestions (each still ≥ 12 random characters) for the user to pick from. */
+export function suggestPasswords(o: GenOptions, count = 4): string[] {
+  const out = new Set<string>();
+  for (let i = 0; out.size < count && i < count * 4; i++) out.add(generatePassword({ ...o, useKeywords: true }));
+  return [...out];
+}

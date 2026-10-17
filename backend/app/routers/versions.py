@@ -9,10 +9,12 @@ from sqlalchemy.orm import Session
 from ..audit import audit
 from ..db import get_db
 from ..deps import Principal, require
-from ..models import Application, ApplicationVersion, Environment, Server, VersionHistory
+from ..models import Application, ApplicationVersion, Environment, Server, ServiceDependency, VersionHistory
 from ..schemas import (
     ApplicationIn,
     ApplicationOut,
+    DependencyIn,
+    DependencyOut,
     DeploymentIn,
     DeploymentOut,
     HistoryOut,
@@ -119,7 +121,7 @@ def delete_application(app_id: int, request: Request, db: Session = Depends(get_
 # ---------------------------------------------------------------- deployments
 
 
-def _dep_query(p: Principal, q, environment_id, application_id, server_id):
+def _dep_query(p: Principal, q, environment_id, application_id, server_id, client_id=None, service_type=None):
     stmt = (
         scope(select(ApplicationVersion), ApplicationVersion.environment_id, p.env_ids())
         .join(Application, ApplicationVersion.application_id == Application.id)
@@ -136,15 +138,21 @@ def _dep_query(p: Principal, q, environment_id, application_id, server_id):
         stmt = stmt.where(ApplicationVersion.application_id == application_id)
     if server_id:
         stmt = stmt.where(ApplicationVersion.server_id == server_id)
+    if client_id:
+        stmt = stmt.where(Server.client_id == client_id)
+    if service_type:
+        stmt = stmt.where(ApplicationVersion.service_type == service_type)
     return stmt.order_by(Application.name, ApplicationVersion.component, Server.name)
 
 
 @router.get("/deployments", response_model=list[DeploymentOut])
 def list_deployments(
     q: str | None = None, environment_id: int | None = None, application_id: int | None = None,
-    server_id: int | None = None, db: Session = Depends(get_db), p: Principal = Depends(require("versions.view")),
+    server_id: int | None = None, client_id: int | None = None, service_type: str | None = None,
+    db: Session = Depends(get_db), p: Principal = Depends(require("versions.view")),
 ):
-    return [_dep_out(d) for d in db.scalars(_dep_query(p, q, environment_id, application_id, server_id)).unique()]
+    return [_dep_out(d) for d in db.scalars(
+        _dep_query(p, q, environment_id, application_id, server_id, client_id, service_type)).unique()]
 
 
 @router.get("/deployments/export")
@@ -195,6 +203,10 @@ def edit_deployment(dep_id: int, body: DeploymentIn, request: Request, db: Sessi
     d.environment_id = body.environment_id
     d.image = body.image
     d.notes = body.notes
+    d.service_type = body.service_type
+    d.port = body.port
+    d.protocol = body.protocol
+    d.health_url = body.health_url
     d.updated_by_id = p.user.id
     if body.current_version != old_version:
         d.previous_version = old_version
@@ -251,6 +263,51 @@ def delete_deployment(dep_id: int, request: Request, db: Session = Depends(get_d
     audit(db, request, "VERSION_DELETED", p.user, entity_type="deployment", entity_id=d.id, entity_label=_label(d),
           details={"version": d.current_version})
     db.delete(d)
+    db.commit()
+
+
+# ---------------------------------------------------------------- service dependencies
+
+
+@router.get("/service-dependencies", response_model=list[DependencyOut])
+def list_dependencies(
+    client_id: int | None = None, db: Session = Depends(get_db), p: Principal = Depends(require("versions.view"))
+):
+    stmt = select(ServiceDependency)
+    if client_id:
+        ids = select(ApplicationVersion.id).join(Server, ApplicationVersion.server_id == Server.id).where(
+            Server.client_id == client_id)
+        stmt = stmt.where(or_(ServiceDependency.from_service_id.in_(ids), ServiceDependency.to_service_id.in_(ids)))
+    return list(db.scalars(stmt))
+
+
+@router.post("/service-dependencies", response_model=DependencyOut, status_code=201)
+def create_dependency(body: DependencyIn, request: Request, db: Session = Depends(get_db),
+                      p: Principal = Depends(require("versions.update"))):
+    if body.from_service_id == body.to_service_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A service cannot depend on itself")
+    a, b = _get_dep(db, p, body.from_service_id), _get_dep(db, p, body.to_service_id)
+    dep = ServiceDependency(**body.model_dump())
+    db.add(dep)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "This connection already exists")
+    audit(db, request, "DEPENDENCY_CREATED", p.user, entity_type="dependency", entity_id=dep.id,
+          entity_label=f"{_label(a)} → {_label(b)}")
+    db.commit()
+    return dep
+
+
+@router.delete("/service-dependencies/{dep_id}", status_code=204)
+def delete_dependency(dep_id: int, request: Request, db: Session = Depends(get_db),
+                      p: Principal = Depends(require("versions.update"))):
+    dep = db.get(ServiceDependency, dep_id)
+    if not dep:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Connection not found")
+    audit(db, request, "DEPENDENCY_DELETED", p.user, entity_type="dependency", entity_id=dep.id)
+    db.delete(dep)
     db.commit()
 
 

@@ -13,7 +13,9 @@ from .db import SessionLocal
 from .models import Role, User, UserSession
 from .netutil import client_ip, ip_allowed
 from .permissions import SUPER_ADMIN, seed
-from .routers import audit_logs, auth, credentials, dashboard, importer, lookups, servers, users, versions
+from .routers import (
+    audit_logs, auth, backup, clients, credentials, dashboard, importer, lookups, reports, servers, users, versions,
+)
 from .security import get_vault, hash_password, password_policy_errors
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -108,5 +110,5 @@ def health():
     return {"status": "ok", "vault": get_vault().name, "vault_ok": get_vault().health()}
 
 
-for r in (auth, users, lookups, servers, credentials, versions, dashboard, audit_logs, importer):
+for r in (auth, users, lookups, clients, servers, credentials, versions, dashboard, audit_logs, importer, backup, reports):
     app.include_router(r.router)

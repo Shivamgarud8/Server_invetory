@@ -13,6 +13,7 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from .config import get_settings
 
@@ -83,6 +84,42 @@ def _derived_key(purpose: bytes) -> bytes:
     )
 
 
+def encrypt_setting(purpose: str, plaintext: str) -> bytes:
+    """App-level secrets such as the SMTP app password (key derived from APP_SECRET_KEY)."""
+    return _aesgcm_encrypt(_derived_key(f"setting:{purpose}".encode()), plaintext, purpose.encode())
+
+
+def decrypt_setting(purpose: str, blob: bytes) -> str:
+    return _aesgcm_decrypt(_derived_key(f"setting:{purpose}".encode()), blob, purpose.encode())
+
+
+# ---------------------------------------------------------------- passphrase encryption (recovery bundles)
+
+BUNDLE_FORMAT = "tagid-recovery-bundle"
+
+
+def _scrypt_key(passphrase: str, salt: bytes, n: int) -> bytes:
+    return Scrypt(salt=salt, length=32, n=n, r=8, p=1).derive(passphrase.encode())
+
+
+def encrypt_bundle(passphrase: str, payload: bytes) -> dict:
+    if len(passphrase) < 12:
+        raise ValueError("Recovery bundle passphrase must be at least 12 characters")
+    salt, nonce, n = os.urandom(16), os.urandom(12), 2**15
+    ct = AESGCM(_scrypt_key(passphrase, salt, n)).encrypt(nonce, payload, BUNDLE_FORMAT.encode())
+    b64 = lambda b: base64.b64encode(b).decode()  # noqa: E731
+    return {"format": BUNDLE_FORMAT, "format_version": 1, "kdf": "scrypt", "kdf_n": n, "kdf_r": 8, "kdf_p": 1,
+            "cipher": "AES-256-GCM", "salt": b64(salt), "nonce": b64(nonce), "ciphertext": b64(ct)}
+
+
+def decrypt_bundle(passphrase: str, bundle: dict) -> bytes:
+    if bundle.get("format") != BUNDLE_FORMAT:
+        raise ValueError("Not a recovery bundle")
+    d = base64.b64decode
+    key = _scrypt_key(passphrase, d(bundle["salt"]), int(bundle["kdf_n"]))
+    return AESGCM(key).decrypt(d(bundle["nonce"]), d(bundle["ciphertext"]), BUNDLE_FORMAT.encode())
+
+
 # ---------------------------------------------------------------- TOTP (2FA)
 
 
@@ -141,6 +178,18 @@ class LocalVault:
     def health(self) -> bool:
         return True
 
+    # Previous versions use a separately derived key, so a leaked current-secret key alone cannot read history
+    def _history_key(self) -> bytes:
+        return HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"credential-history").derive(self._key)
+
+    def archive(self, credential_id: int, current_blob: bytes | None) -> dict:
+        """Re-encrypt the current secret into a history record before it is replaced."""
+        secret = self.read(credential_id, current_blob)
+        return {"secret_enc": _aesgcm_encrypt(self._history_key(), secret, f"history:{credential_id}".encode())}
+
+    def read_history(self, credential_id: int, entry) -> str:
+        return _aesgcm_decrypt(self._history_key(), entry.secret_enc, f"history:{credential_id}".encode())
+
 
 class HashiCorpVault:
     """HashiCorp Vault KV v2. The database stores nothing secret; Vault keeps version history."""
@@ -178,6 +227,19 @@ class HashiCorpVault:
         r = self._client.delete(self._path("metadata", credential_id))
         if r.status_code >= 300 and r.status_code != 404:
             raise VaultError(f"Vault delete failed ({r.status_code})")
+
+    def archive(self, credential_id: int, current_blob: bytes | None) -> dict:
+        """Vault KV v2 already versions secrets: remember which version is being replaced."""
+        r = self._client.get(self._path("metadata", credential_id))
+        if r.status_code != 200:
+            raise VaultError(f"Vault metadata read failed ({r.status_code})")
+        return {"vault_version": int(r.json()["data"]["current_version"])}
+
+    def read_history(self, credential_id: int, entry) -> str:
+        r = self._client.get(self._path("data", credential_id), params={"version": entry.vault_version})
+        if r.status_code != 200:
+            raise VaultError(f"Vault read failed ({r.status_code})")
+        return r.json()["data"]["data"]["password"]
 
     def health(self) -> bool:
         try:

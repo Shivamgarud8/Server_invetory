@@ -2,11 +2,11 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { PageHead } from "../components/Layout";
 import { copyText } from "../components/PasswordGenerator";
-import { Empty, EnvBadge, Field, Modal, StatusBadge, TagChips, TagPicker, useUi } from "../components/ui";
+import { ClientChip, Empty, EnvBadge, Field, HealthBadge, Modal, StatusBadge, TagChips, TagPicker, useUi } from "../components/ui";
 import { api, download } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useDebounced, useLoad, useLookups } from "../lib/hooks";
-import type { Network, Server } from "../lib/types";
+import type { Client, Network, Server } from "../lib/types";
 
 export const SERVER_STATUSES = ["Active", "Maintenance", "Inactive", "Decommissioned"];
 const SERVER_TYPES = ["Application Server", "Database Server", "Docker Host", "Registry", "Load Balancer", "Monitoring", "Storage", "Bastion", "Other"];
@@ -15,7 +15,9 @@ export function ipOf(s: Server, type: Network["ip_type"]) {
   return s.networks.filter((n) => n.ip_type === type).map((n) => n.ip_address.split("/")[0]).join(", ");
 }
 
-export function Servers() {
+export const SERVER_ROLES = ["application", "database", "proxy", "combined", "storage", "monitoring", "other"];
+
+export function Servers({ clientId, embedded }: { clientId?: number; embedded?: boolean } = {}) {
   const { can } = useAuth();
   const { toast } = useUi();
   const lk = useLookups();
@@ -25,19 +27,42 @@ export function Servers() {
   const [env, setEnv] = useState(sp.get("environment_id") || "");
   const [status, setStatus] = useState("");
   const [tag, setTag] = useState("");
+  const [client, setClient] = useState(clientId ? String(clientId) : sp.get("client_id") || "");
   const dq = useDebounced(q);
-  const params = { q: dq, environment_id: env, status, tag_id: tag };
-  const { data, reload } = useLoad(() => api.get<Server[]>("/servers", params), [dq, env, status, tag]);
+  const params = { q: dq, environment_id: env, status, tag_id: tag, client_id: client };
+  const { data, reload } = useLoad(() => api.get<Server[]>("/servers", params), [dq, env, status, tag, client]);
+  const { data: clients } = useLoad(() => (embedded ? Promise.resolve([] as Client[]) : api.get<Client[]>("/clients").catch(() => [])));
   const [editing, setEditing] = useState<Server | "new" | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const checkNow = async () => {
+    setChecking(true);
+    try {
+      await api.post("/monitoring/check", { server_ids: (data || []).map((s) => s.id), domain_ids: [] });
+      toast("Status checked");
+      reload();
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const actions = (
+    <>
+      <button className="btn" disabled={checking || !data?.length} onClick={checkNow}>{checking ? "Checking…" : "📡 Check status"}</button>
+      <button className="btn" onClick={() => download("/servers/export", params).catch((e) => toast(e.message, true))}>⇩ Export CSV</button>
+      {can("servers.create") && <button className="btn primary" onClick={() => setEditing("new")}>+ Add Server</button>}
+    </>
+  );
 
   return (
     <>
-      <PageHead title="Server Inventory" sub="All TagID servers across environments">
-        <button className="btn" onClick={() => download("/servers/export", params).catch((e) => toast(e.message, true))}>⇩ Export CSV</button>
-        {can("servers.create") && <button className="btn primary" onClick={() => setEditing("new")}>+ Add Server</button>}
-      </PageHead>
+      {!embedded && <PageHead title="Server Inventory" sub="All servers across clients and environments">{actions}</PageHead>}
       <div className="card">
         <div className="filters">
+          {embedded && <div className="row" style={{ width: "100%" }}><span className="spacer" />{actions}</div>}
+          {!embedded && <select value={client} onChange={(e) => setClient(e.target.value)}><option value="">All clients</option>{clients?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}
           <input type="search" placeholder="Search name, IP, hostname, purpose, owner…" value={q} onChange={(e) => setQ(e.target.value)} />
           <select value={env} onChange={(e) => setEnv(e.target.value)}><option value="">All environments</option>{lk.environments.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select>
           <select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Any status</option>{SERVER_STATUSES.map((s) => <option key={s}>{s}</option>)}</select>
@@ -47,15 +72,16 @@ export function Servers() {
         </div>
         <div className="table-wrap">
           <table className="tbl">
-            <thead><tr><th>Server</th><th>Env</th><th>Type</th><th>Private IP</th><th>Public IP</th><th>CPU / RAM / Disk</th><th>OS</th><th>Docker</th><th>Purpose</th><th>Status</th></tr></thead>
+            <thead><tr><th>Server</th>{!embedded && <th>Client</th>}<th>Env</th><th>Role</th><th>Private IP</th><th>VPN / Public</th><th>CPU / RAM / Disk</th><th>OS</th><th>Docker</th><th>Reachability</th><th>Status</th></tr></thead>
             <tbody>
               {data?.map((s) => (
                 <tr key={s.id} className="clickable" onClick={() => nav(`/servers/${s.id}`)}>
                   <td><b>{s.name}</b>{s.tags.length > 0 && <div style={{ marginTop: 3 }}><TagChips tags={s.tags} /></div>}</td>
+                  {!embedded && <td><ClientChip client={s.client} /></td>}
                   <td><EnvBadge env={s.environment} /></td>
-                  <td className="small">{s.server_type}</td>
+                  <td className="small"><span className="badge gray">{s.role}</span><div className="muted">{s.server_type}</div></td>
                   <td className="mono">{ipOf(s, "private") || <span className="muted">—</span>}</td>
-                  <td className="mono">{ipOf(s, "public") || <span className="muted">—</span>}</td>
+                  <td className="mono small">{ipOf(s, "vpn") || "—"}<div>{ipOf(s, "public") || "—"}</div></td>
                   <td className="small nowrap">
                     {s.spec?.cpu_cores ?? "–"} vCPU · {s.spec?.ram_gb != null ? `${+s.spec.ram_gb} GB` : "–"} · {s.spec?.disk_gb != null ? `${+s.spec.disk_gb} GB` : "–"}
                     {s.spec?.disk_usage_pct != null && <div className="bar" style={{ marginTop: 4, width: 120 }} title={`Disk ${+s.spec.disk_usage_pct}% used`}>
@@ -63,7 +89,7 @@ export function Servers() {
                   </td>
                   <td className="small">{[s.os_name, s.os_version].filter(Boolean).join(" ") || "—"}</td>
                   <td className="mono small">{s.docker_version || "—"}</td>
-                  <td className="small" style={{ maxWidth: 260 }}>{s.purpose}</td>
+                  <td><HealthBadge status={s.health_status} detail={s.health_detail} at={s.health_checked_at} /></td>
                   <td><StatusBadge status={s.status} /></td>
                 </tr>
               ))}
@@ -72,7 +98,7 @@ export function Servers() {
           {data && !data.length && <Empty>No servers found.</Empty>}
         </div>
       </div>
-      {editing && <ServerForm initial={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={(s) => { setEditing(null); reload(); nav(`/servers/${s.id}`); }} />}
+      {editing && <ServerForm initial={editing === "new" ? null : editing} defaultClientId={clientId} onClose={() => setEditing(null)} onSaved={(s) => { setEditing(null); reload(); if (!embedded) nav(`/servers/${s.id}`); }} />}
     </>
   );
 }
@@ -80,14 +106,23 @@ export function Servers() {
 const FACTS_CMD = `. /etc/os-release; echo "hostname=$(hostname -f)"; echo "os_name=$NAME"; echo "os_version=$VERSION_ID"; echo "kernel=$(uname -r)"; echo "arch=$(uname -m)"; echo "cpu=$(nproc)"; echo "ram_gb=$(awk '/MemTotal/{printf "%.0f",$2/1048576}' /proc/meminfo)"; echo "disk_gb=$(df -BG --output=size / | tail -1 | tr -dc 0-9)"; echo "disk_pct=$(df --output=pcent / | tail -1 | tr -dc 0-9)"; echo "docker=$(docker version --format '{{.Server.Version}}' 2>/dev/null)"; echo "compose=$(docker compose version --short 2>/dev/null)"; echo "ips=$(hostname -I)"`;
 
 interface SF {
-  name: string; hostname: string; environment_id: string; server_type: string; provider: string; location: string;
+  name: string; hostname: string; environment_id: string; client_id: string; role: string; server_type: string; provider: string; location: string;
+  ssh_user: string; ssh_port: string; ssh_auth_method: string; ssh_key_ref: string; mount_points: string; exposed_ports: string;
+  firewall_notes: string; backup_policy: string; recovery_instructions: string;
   os_name: string; os_version: string; kernel_version: string; architecture: string; docker_version: string;
   compose_version: string; status: string; owner: string; purpose: string; notes: string;
   cpu_cores: string; ram_gb: string; disk_gb: string; disk_usage_pct: string;
   networks: { ip_type: Network["ip_type"]; ip_address: string; label: string }[]; tag_ids: number[];
 }
 
-export function ServerForm({ initial, onClose, onSaved }: { initial: Server | null; onClose: () => void; onSaved: (s: Server) => void }) {
+const TEXT_FIELDS = ["name", "hostname", "server_type", "role", "provider", "location", "os_name", "os_version", "kernel_version", "architecture",
+  "docker_version", "compose_version", "status", "owner", "purpose", "notes", "ssh_user", "ssh_auth_method", "ssh_key_ref", "mount_points",
+  "exposed_ports", "firewall_notes", "backup_policy", "recovery_instructions"] as const;
+
+export function ServerForm({ initial, defaultClientId, onClose, onSaved }: { initial: Server | null; defaultClientId?: number; onClose: () => void; onSaved: (s: Server) => void }) {
+  const { data: clients } = useLoad(() => api.get<Client[]>("/clients").catch(() => [] as Client[]));
+  const [jsonOpen, setJsonOpen] = useState(false);
+  const [jsonText, setJsonText] = useState("");
   const lk = useLookups();
   const { toast } = useUi();
   const [busy, setBusy] = useState(false);
@@ -95,6 +130,10 @@ export function ServerForm({ initial, onClose, onSaved }: { initial: Server | nu
   const [factsText, setFactsText] = useState("");
   const [f, setF] = useState<SF>(() => ({
     name: initial?.name || "", hostname: initial?.hostname || "", environment_id: String(initial?.environment.id || ""),
+    client_id: String(initial?.client?.id || defaultClientId || ""), role: initial?.role || "combined",
+    ssh_user: initial?.ssh_user || "", ssh_port: initial?.ssh_port ? String(initial.ssh_port) : "22", ssh_auth_method: initial?.ssh_auth_method || "",
+    ssh_key_ref: initial?.ssh_key_ref || "", mount_points: initial?.mount_points || "", exposed_ports: initial?.exposed_ports || "",
+    firewall_notes: initial?.firewall_notes || "", backup_policy: initial?.backup_policy || "", recovery_instructions: initial?.recovery_instructions || "",
     server_type: initial?.server_type || "", provider: initial?.provider || "", location: initial?.location || "",
     os_name: initial?.os_name || "", os_version: initial?.os_version || "", kernel_version: initial?.kernel_version || "",
     architecture: initial?.architecture || "", docker_version: initial?.docker_version || "", compose_version: initial?.compose_version || "",
@@ -131,7 +170,7 @@ export function ServerForm({ initial, onClose, onSaved }: { initial: Server | nu
     setBusy(true);
     const num = (v: string) => (v === "" ? null : +v);
     const body = {
-      ...f, environment_id: +f.environment_id,
+      ...f, environment_id: +f.environment_id, client_id: f.client_id ? +f.client_id : null, ssh_port: f.ssh_port ? +f.ssh_port : null,
       spec: { cpu_cores: num(f.cpu_cores), ram_gb: num(f.ram_gb), disk_gb: num(f.disk_gb), disk_usage_pct: num(f.disk_usage_pct) },
       networks: f.networks.filter((n) => n.ip_address.trim()).map((n) => ({ ...n, label: n.label || null })),
     };
@@ -153,6 +192,7 @@ export function ServerForm({ initial, onClose, onSaved }: { initial: Server | nu
     <Modal wide title={initial ? `Edit ${initial.name}` : "Add server"} onClose={onClose}
       footer={<>
         <button type="button" className="btn" onClick={() => setFacts(true)}>⚡ Paste server facts</button>
+        <button type="button" className="btn" onClick={() => setJsonOpen(true)}>{"{ }"} Import JSON</button>
         <span className="spacer" />
         <button className="btn" onClick={onClose}>Cancel</button>
         <button className="btn primary" form="srv-form" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
@@ -161,10 +201,18 @@ export function ServerForm({ initial, onClose, onSaved }: { initial: Server | nu
         <div className="form-section" style={{ borderTop: 0, marginTop: 0, paddingTop: 0 }}>Server details</div>
         <Field label="Server name" required><input required value={f.name} onChange={(e) => set("name", e.target.value)} placeholder="srv-p-03-db" /></Field>
         <Field label="Hostname"><input value={f.hostname} onChange={(e) => set("hostname", e.target.value)} /></Field>
+        <Field label="Client">
+          <select value={f.client_id} onChange={(e) => set("client_id", e.target.value)}>
+            <option value="">— None —</option>{clients?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
         <Field label="Environment" required>
           <select required value={f.environment_id} onChange={(e) => set("environment_id", e.target.value)}>
             <option value="">Select…</option>{lk.environments.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
+        </Field>
+        <Field label="Role" required>
+          <select value={f.role} onChange={(e) => set("role", e.target.value)}>{SERVER_ROLES.map((r) => <option key={r}>{r}</option>)}</select>
         </Field>
         <Field label="Server type" required>
           <input required list="server-types" value={f.server_type} onChange={(e) => set("server_type", e.target.value)} />
@@ -180,7 +228,7 @@ export function ServerForm({ initial, onClose, onSaved }: { initial: Server | nu
           {f.networks.map((n, i) => (
             <div key={i} className="row">
               <select value={n.ip_type} onChange={(e) => netSet(i, "ip_type", e.target.value)} style={{ width: 150 }}>
-                <option value="private">Private IP</option><option value="public">Public IP</option><option value="network">Network IP</option><option value="management">Management</option>
+                <option value="private">Private IP</option><option value="public">Public IP</option><option value="vpn">VPN / NetBird IP</option><option value="network">Network IP</option><option value="management">Management</option>
               </select>
               <input className="mono" placeholder="10.80.0.13" value={n.ip_address} onChange={(e) => netSet(i, "ip_address", e.target.value)} />
               <input placeholder="Label (eth0, VPN…)" value={n.label} onChange={(e) => netSet(i, "label", e.target.value)} style={{ maxWidth: 200 }} />
@@ -189,6 +237,13 @@ export function ServerForm({ initial, onClose, onSaved }: { initial: Server | nu
           ))}
           <div><button type="button" className="btn sm" onClick={() => set("networks", [...f.networks, { ip_type: "private", ip_address: "", label: "" }])}>+ Add IP</button></div>
         </div>
+
+        <div className="form-section">SSH access</div>
+        <Field label="SSH user"><input className="mono" value={f.ssh_user} onChange={(e) => set("ssh_user", e.target.value)} placeholder="ubuntu" /></Field>
+        <Field label="SSH port"><input type="number" min={1} max={65535} value={f.ssh_port} onChange={(e) => set("ssh_port", e.target.value)} /></Field>
+        <Field label="Auth method"><select value={f.ssh_auth_method} onChange={(e) => set("ssh_auth_method", e.target.value)}><option value="">—</option><option value="key">SSH key</option><option value="password">Password</option><option value="key+password">Key + password</option></select></Field>
+        <Field label="Private key reference"><input value={f.ssh_key_ref} onChange={(e) => set("ssh_key_ref", e.target.value)} placeholder="1Password: Snitch prod key / ~/.ssh/snitch.pem" /></Field>
+        <p className="full small muted" style={{ margin: 0 }}>Store only where the key lives — never paste a private key here. SSH passwords go in Password Management.</p>
 
         <div className="form-section">CPU / RAM / Disk</div>
         <Field label="CPU cores"><input type="number" min={0} value={f.cpu_cores} onChange={(e) => set("cpu_cores", e.target.value)} /></Field>
@@ -204,11 +259,47 @@ export function ServerForm({ initial, onClose, onSaved }: { initial: Server | nu
         <Field label="Docker version"><input className="mono" value={f.docker_version} onChange={(e) => set("docker_version", e.target.value)} /></Field>
         <Field label="Compose version"><input className="mono" value={f.compose_version} onChange={(e) => set("compose_version", e.target.value)} /></Field>
 
+        <div className="form-section">Firewall, ports & storage</div>
+        <Field label="Exposed ports" full><textarea rows={2} className="mono" value={f.exposed_ports} onChange={(e) => set("exposed_ports", e.target.value)} placeholder="22/tcp (VPN only), 80,443/tcp (public), 5432/tcp (app server only)" /></Field>
+        <Field label="Firewall / network notes" full><textarea rows={2} value={f.firewall_notes} onChange={(e) => set("firewall_notes", e.target.value)} placeholder="UFW enabled, SG sg-0abc…, only NetBird for SSH" /></Field>
+        <Field label="Mount points" full><textarea rows={2} className="mono" value={f.mount_points} onChange={(e) => set("mount_points", e.target.value)} placeholder="/ 100G, /data 500G (EBS gp3)" /></Field>
+
+        <div className="form-section">Backup & recovery</div>
+        <Field label="Backup policy" full><textarea rows={2} value={f.backup_policy} onChange={(e) => set("backup_policy", e.target.value)} placeholder="Daily snapshot 02:00, 14 days" /></Field>
+        <Field label="Recovery instructions" full><textarea rows={3} value={f.recovery_instructions} onChange={(e) => set("recovery_instructions", e.target.value)} placeholder="1. Launch from latest AMI… 2. Attach /data volume… 3. docker compose up -d" /></Field>
+
         <div className="form-section">Purpose</div>
         <Field label="Purpose" full><input value={f.purpose} onChange={(e) => set("purpose", e.target.value)} placeholder="PostgreSQL / Redis / RabbitMQ / MinIO" /></Field>
         <Field label="Notes" full><textarea value={f.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
         <Field label="Tags" full><TagPicker all={lk.tags} value={f.tag_ids} onChange={(v) => set("tag_ids", v)} /></Field>
       </form>
+
+      {jsonOpen && (
+        <Modal title="Import server from JSON" onClose={() => setJsonOpen(false)}
+          footer={<><button className="btn" onClick={() => setJsonOpen(false)}>Cancel</button><button className="btn primary" onClick={() => {
+            try {
+              const j = JSON.parse(jsonText);
+              setF((p) => {
+                const n = { ...p } as SF & Record<string, unknown>;
+                for (const k of TEXT_FIELDS) if (j[k] != null) n[k] = String(j[k]);
+                if (j.ssh_port != null) n.ssh_port = String(j.ssh_port);
+                const sp = j.spec || {};
+                for (const k of ["cpu_cores", "ram_gb", "disk_gb", "disk_usage_pct"] as const) if (sp[k] != null) n[k] = String(sp[k]);
+                if (Array.isArray(j.networks)) n.networks = j.networks.map((x: { ip_type?: string; ip_address: string; label?: string }) => ({ ip_type: (x.ip_type || "private") as Network["ip_type"], ip_address: String(x.ip_address), label: x.label || "" }));
+                const env = lk.environments.find((e) => e.name === (j.environment?.name || j.environment));
+                if (env) n.environment_id = String(env.id);
+                return n;
+              });
+              setJsonOpen(false);
+              toast("Fields filled from JSON — review before saving");
+            } catch {
+              toast("Invalid JSON", true);
+            }
+          }}>Apply</button></>}>
+          <p className="muted small" style={{ marginTop: 0 }}>Paste a server exported from this portal (server page → Export JSON) or an inventory entry. Fields are only filled into the form; nothing is saved until you click Save.</p>
+          <textarea className="mono" rows={14} value={jsonText} onChange={(e) => setJsonText(e.target.value)} placeholder={'{"name": "snitch-app", "role": "application", "networks": [{"ip_type": "private", "ip_address": "10.10.0.11"}]}'} />
+        </Modal>
+      )}
 
       {facts && (
         <Modal title="Paste server facts" onClose={() => setFacts(false)}
